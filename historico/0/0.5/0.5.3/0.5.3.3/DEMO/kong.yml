@@ -1,0 +1,22 @@
+_format_version: "1.1"
+
+services:
+  - name: m7-service
+    url: http://app-m7:8000
+    routes:
+      - name: m7-route
+        paths:
+          - /
+
+plugins:
+  - name: jwt
+    service: m7-service
+    config:
+      claims_to_verify:
+        - exp
+
+consumers:
+  - username: bienestar_universitario_admin
+    jwt_secrets:
+      - key: "uni-issuer"
+        secret: "uni2026"

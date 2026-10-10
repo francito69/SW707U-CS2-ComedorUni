@@ -1,0 +1,13 @@
+fastapi[websockets]
+python-dotenv
+httpx
+aio-pika
+uvicorn[standard]
+beautifulsoup4
+requests
+redis
+deepface
+opencv-python<5
+psycopg2-binary
+Pillow
+tf-keras

@@ -1,0 +1,48 @@
+networks:
+  comedor-network:
+    driver: bridge
+
+services:
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    env_file: .env
+    volumes:
+      - ./001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    networks:
+      - comedor-network
+
+  redis-cache:
+    image: redis:7-alpine
+    container_name: redis-cache
+    networks:
+      - comedor-network
+
+  app-m7:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-m7
+    env_file: .env
+    depends_on:
+      - postgres-db
+      - redis-cache
+    networks:
+      - comedor-network
+
+  api-gateway:
+    image: kong:3.8
+    container_name: api-gateway
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./kong.yml:/usr/local/kong/kong.yml:ro
+    depends_on:
+      - app-m7
+    networks:
+      - comedor-network

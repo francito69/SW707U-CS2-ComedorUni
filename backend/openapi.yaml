@@ -1,0 +1,978 @@
+openapi: 3.1.0
+info:
+  title: SW603 — Sistema de Comedor UNI
+  version: 0.1.0
+paths:
+  /ping:
+    get:
+      summary: Ping
+      operationId: ping_ping_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /parse-data:
+    post:
+      summary: Parse Data
+      operationId: parse_data_parse_data_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParseDataRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParseDataResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /session/takeover:
+    post:
+      summary: Session Takeover
+      description: 'El dispositivo actual (data.sid) se queda como la sesión activa
+        y expulsa a la
+
+        anterior en tiempo real (WebSocket). Se usa cuando el usuario elige "continuar
+        aquí".'
+      operationId: session_takeover_session_takeover_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TakeoverRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /verify-biometric:
+    post:
+      summary: Verify Biometric
+      operationId: verify_biometric_verify_biometric_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BiometricVerifyRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BiometricVerifyResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /me:
+    get:
+      summary: Get Me
+      description: Valida el sid y devuelve los datos de sesión. Usado al reabrir
+        la app.
+      operationId: get_me_me_get
+      parameters:
+      - name: sid
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Sid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /logout:
+    post:
+      summary: Logout
+      operationId: logout_logout_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /menu:
+    get:
+      tags:
+      - menu
+      summary: Get Menu Dia
+      description: 'Retorna el menú del día.
+
+        Si no se pasa fecha, usa la fecha actual en hora de Perú (UTC-5).'
+      operationId: get_menu_dia_menu_get
+      parameters:
+      - name: fecha
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Fecha
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - menu
+      summary: Create Menu Dia Endpoint
+      operationId: create_menu_dia_endpoint_menu_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuDiaCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - menu
+      summary: Update Menu Dia Endpoint
+      operationId: update_menu_dia_endpoint_menu_put
+      parameters:
+      - name: fecha
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Fecha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuDiaUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /queue/active-service:
+    get:
+      tags:
+      - queue
+      summary: Active Service
+      description: Retorna todos los turnos activos en este momento (público, sin
+        autenticación).
+      operationId: active_service_queue_active_service_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /queue/register-push-token:
+    post:
+      tags:
+      - queue
+      summary: Register Push Token
+      operationId: register_push_token_queue_register_push_token_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /queue/join:
+    post:
+      tags:
+      - queue
+      summary: Join Queue
+      operationId: join_queue_queue_join_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinQueueRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JoinQueueResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /queue/status:
+    get:
+      tags:
+      - queue
+      summary: Queue Status
+      operationId: queue_status_queue_status_get
+      parameters:
+      - name: sid
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Sid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnoStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /queue/confirm:
+    post:
+      tags:
+      - queue
+      summary: Confirm Presence
+      operationId: confirm_presence_queue_confirm_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /queue/leave:
+    post:
+      tags:
+      - queue
+      summary: Leave Queue
+      operationId: leave_queue_queue_leave_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config/turnos:
+    get:
+      tags:
+      - config
+      summary: List Turnos Config Endpoint
+      description: Lista las plantillas de turno configurables (ALMUERZO y CENA).
+      operationId: list_turnos_config_endpoint_config_turnos_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TurnoConfigResponse'
+                type: array
+                title: Response List Turnos Config Endpoint Config Turnos Get
+  /config/turnos/{tipo}:
+    get:
+      tags:
+      - config
+      summary: Get Turno Config Endpoint
+      description: Retorna la plantilla de un turno (ALMUERZO o CENA).
+      operationId: get_turno_config_endpoint_config_turnos__tipo__get
+      parameters:
+      - name: tipo
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tipo
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnoConfigResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - config
+      summary: Update Turno Config Endpoint
+      description: 'Actualiza la plantilla de un turno (ALMUERZO o CENA).
+
+        Solo se modifican los campos enviados (horarios, raciones_max, activo).'
+      operationId: update_turno_config_endpoint_config_turnos__tipo__put
+      parameters:
+      - name: tipo
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tipo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnoConfigUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnoConfigResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config/menu:
+    get:
+      tags:
+      - config
+      summary: Get Menu Dia Endpoint
+      description: Retorna el menú de una fecha (por defecto, hoy en hora Perú).
+      operationId: get_menu_dia_endpoint_config_menu_get
+      parameters:
+      - name: fecha
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Fecha
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - config
+      summary: Create Menu Dia Endpoint
+      description: Registra el menú de una fecha (almuerzo/cena con sus platos).
+      operationId: create_menu_dia_endpoint_config_menu_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuDiaCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - config
+      summary: Update Menu Dia Endpoint
+      description: Edita el menú ya registrado de una fecha.
+      operationId: update_menu_dia_endpoint_config_menu_put
+      parameters:
+      - name: fecha
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Fecha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuDiaUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDiaResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    BiometricVerifyRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+        photo_base64:
+          type: string
+          title: Photo Base64
+      type: object
+      required:
+      - sid
+      - photo_base64
+      title: BiometricVerifyRequest
+    BiometricVerifyResponse:
+      properties:
+        verified:
+          type: boolean
+          title: Verified
+        distance:
+          type: number
+          title: Distance
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - verified
+      - distance
+      - message
+      title: BiometricVerifyResponse
+    ConfirmRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+      type: object
+      required:
+      - sid
+      title: ConfirmRequest
+    ConfirmResponse:
+      properties:
+        estado:
+          type: string
+          title: Estado
+        mensaje:
+          type: string
+          title: Mensaje
+        turno_asignado:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Turno Asignado
+      type: object
+      required:
+      - estado
+      - mensaje
+      title: ConfirmResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    JoinQueueRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+        tipo:
+          type: string
+          title: Tipo
+      type: object
+      required:
+      - sid
+      - tipo
+      title: JoinQueueRequest
+    JoinQueueResponse:
+      properties:
+        numero_turno:
+          type: integer
+          title: Numero Turno
+        tipo:
+          type: string
+          title: Tipo
+        posicion:
+          type: integer
+          title: Posicion
+        raciones_restantes:
+          type: integer
+          title: Raciones Restantes
+        mensaje:
+          type: string
+          title: Mensaje
+      type: object
+      required:
+      - numero_turno
+      - tipo
+      - posicion
+      - raciones_restantes
+      - mensaje
+      title: JoinQueueResponse
+    LogoutRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+      type: object
+      required:
+      - sid
+      title: LogoutRequest
+    MenuComidaInput:
+      properties:
+        tipo_comida:
+          type: string
+          title: Tipo Comida
+        energia_kcal:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Energia Kcal
+        lipidos_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Lipidos G
+        proteinas_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Proteinas G
+        carbohidratos_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Carbohidratos G
+        platos:
+          items:
+            $ref: '#/components/schemas/PlatoInput'
+          type: array
+          title: Platos
+          default: []
+      type: object
+      required:
+      - tipo_comida
+      title: MenuComidaInput
+    MenuComidaResponse:
+      properties:
+        id:
+          type: integer
+          title: Id
+        tipo_comida:
+          type: string
+          title: Tipo Comida
+        energia_kcal:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Energia Kcal
+        lipidos_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Lipidos G
+        proteinas_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Proteinas G
+        carbohidratos_g:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Carbohidratos G
+        platos:
+          items:
+            $ref: '#/components/schemas/PlatoResponse'
+          type: array
+          title: Platos
+          default: []
+      type: object
+      required:
+      - id
+      - tipo_comida
+      title: MenuComidaResponse
+    MenuDiaCreateRequest:
+      properties:
+        fecha:
+          type: string
+          format: date
+          title: Fecha
+        comidas:
+          items:
+            $ref: '#/components/schemas/MenuComidaInput'
+          type: array
+          title: Comidas
+      type: object
+      required:
+      - fecha
+      - comidas
+      title: MenuDiaCreateRequest
+    MenuDiaResponse:
+      properties:
+        fecha:
+          type: string
+          format: date
+          title: Fecha
+        comidas:
+          items:
+            $ref: '#/components/schemas/MenuComidaResponse'
+          type: array
+          title: Comidas
+      type: object
+      required:
+      - fecha
+      - comidas
+      title: MenuDiaResponse
+    MenuDiaUpdateRequest:
+      properties:
+        comidas:
+          items:
+            $ref: '#/components/schemas/MenuComidaInput'
+          type: array
+          title: Comidas
+      type: object
+      required:
+      - comidas
+      title: MenuDiaUpdateRequest
+    ParseDataRequest:
+      properties:
+        home_html:
+          type: string
+          title: Home Html
+          default: ''
+        cursos_html:
+          type: string
+          title: Cursos Html
+          default: ''
+        datos_html:
+          type: string
+          title: Datos Html
+          default: ''
+        device_id:
+          type: string
+          title: Device Id
+          default: ''
+      type: object
+      title: ParseDataRequest
+    ParseDataResponse:
+      properties:
+        sid:
+          type: string
+          title: Sid
+        nombre:
+          type: string
+          title: Nombre
+        codigo:
+          type: string
+          title: Codigo
+        email:
+          type: string
+          title: Email
+        creditos_llevados:
+          type: integer
+          title: Creditos Llevados
+        session_conflict:
+          type: boolean
+          title: Session Conflict
+          default: false
+      type: object
+      required:
+      - sid
+      - nombre
+      - codigo
+      - email
+      - creditos_llevados
+      title: ParseDataResponse
+    PlatoInput:
+      properties:
+        nombre:
+          type: string
+          title: Nombre
+      type: object
+      required:
+      - nombre
+      title: PlatoInput
+    PlatoResponse:
+      properties:
+        id:
+          type: integer
+          title: Id
+        nombre:
+          type: string
+          title: Nombre
+      type: object
+      required:
+      - id
+      - nombre
+      title: PlatoResponse
+    PushTokenRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+        push_token:
+          type: string
+          title: Push Token
+      type: object
+      required:
+      - sid
+      - push_token
+      title: PushTokenRequest
+    TakeoverRequest:
+      properties:
+        sid:
+          type: string
+          title: Sid
+      type: object
+      required:
+      - sid
+      title: TakeoverRequest
+    TurnoConfigResponse:
+      properties:
+        id:
+          type: integer
+          title: Id
+        tipo:
+          type: string
+          title: Tipo
+        hora_apertura:
+          type: string
+          format: time
+          title: Hora Apertura
+        hora_inicio:
+          type: string
+          format: time
+          title: Hora Inicio
+        hora_cierre:
+          type: string
+          format: time
+          title: Hora Cierre
+        raciones_max:
+          type: integer
+          title: Raciones Max
+        activo:
+          type: boolean
+          title: Activo
+      type: object
+      required:
+      - id
+      - tipo
+      - hora_apertura
+      - hora_inicio
+      - hora_cierre
+      - raciones_max
+      - activo
+      title: TurnoConfigResponse
+    TurnoConfigUpdateRequest:
+      properties:
+        hora_apertura:
+          anyOf:
+          - type: string
+            format: time
+          - type: 'null'
+          title: Hora Apertura
+        hora_inicio:
+          anyOf:
+          - type: string
+            format: time
+          - type: 'null'
+          title: Hora Inicio
+        hora_cierre:
+          anyOf:
+          - type: string
+            format: time
+          - type: 'null'
+          title: Hora Cierre
+        raciones_max:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Raciones Max
+        activo:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Activo
+      type: object
+      title: TurnoConfigUpdateRequest
+      description: 'Actualización parcial: solo se modifican los campos enviados.'
+    TurnoStatusResponse:
+      properties:
+        numero_turno:
+          type: integer
+          title: Numero Turno
+        estado:
+          type: string
+          title: Estado
+        tipo:
+          type: string
+          title: Tipo
+        posicion:
+          type: integer
+          title: Posicion
+        turno_actual:
+          type: integer
+          title: Turno Actual
+        turno_asignado:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Turno Asignado
+        llamado_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Llamado At
+      type: object
+      required:
+      - numero_turno
+      - estado
+      - tipo
+      - posicion
+      - turno_actual
+      title: TurnoStatusResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
