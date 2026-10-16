@@ -21,7 +21,7 @@ workspace "ComedorUNI" "Gestión de turnos del comedor universitario mediante co
             }
 
             base_datos = container "Base de datos" "Estudiantes, turnos, bloques horarios, raciones y menú" "PostgreSQL 15" "Base de datos"
-            cache_sesiones = container "Caché y sesiones" "Sesión por sid (no JWT) y estado temporal; coordina WebSockets entre réplicas por Pub/Sub" "Redis 7" "Base de datos"
+            cache_sesiones = container "Caché y sesiones" "Almacena sesiones temporales por sid (no JWT). No coordina WebSockets entre réplicas en la implementación actual" "Redis 7" "Base de datos"
             bus_eventos = container "Bus de eventos" "Transporta eventos de encolado, atención, llamado y cancelación de forma asíncrona" "RabbitMQ 3"
         }
 
@@ -38,7 +38,7 @@ workspace "ComedorUNI" "Gestión de turnos del comedor universitario mediante co
         app_movil -> backend "Solicita turno, confirma, cancela, consulta estado, envía HTML scrapeado y foto para verificación biométrica" "JSON / HTTPS + WebSocket"
         app_movil -> portalAlumnos "Login del estudiante y lectura de su portal académico" "WebView / HTTPS"
         backend -> base_datos "Lee y escribe turnos, bloques, raciones y menú" "SQL"
-        backend -> cache_sesiones "Guarda/lee la sesión por sid; publica y se suscribe a cambios de estado" "Redis Pub/Sub"
+        backend -> cache_sesiones "Guarda y lee la sesión por sid" "Redis"
         backend -> bus_eventos "Publica y consume eventos de turno" "AMQP"
         backend -> expoPush "Envía la notificación push cuando procesa un evento de turno" "API REST / HTTPS"
 

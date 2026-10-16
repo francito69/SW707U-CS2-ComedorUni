@@ -1,50 +1,36 @@
-# Welcome to your Expo app 👋
+# Frontend de ComedorUNI
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aplicación móvil/web en React Native, Expo Router y TypeScript. La guía completa
+para levantar backend y servicios está en el [README principal](../../README.md).
 
-## Get started
+## Requisitos
 
-1. Install dependencies
+- Node.js 20 o posterior y npm.
+- Backend ComedorUNI disponible en la URL configurada.
 
-   ```bash
-   npm install
-   ```
+## Configuración y ejecución
 
-2. Start the app
+Desde `frontend/src/`:
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```powershell
+Copy-Item .env.example .env
+npm ci
+npm start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Para navegador ejecuta `npm run web`. Las URL se configuran mediante
+`EXPO_PUBLIC_API_URL` y `EXPO_PUBLIC_WS_URL` en este directorio. Los valores
+`localhost` sirven para web y simuladores locales; en emulador Android utiliza
+`10.0.2.2`, y en un teléfono físico la IP LAN del equipo que ejecuta el backend.
 
-## Learn more
+## Validaciones
 
-To learn more about developing your project with Expo, look at the following resources:
+```powershell
+npx tsc --noEmit
+npm run lint
+npx expo export --platform web
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Actualmente no hay suite de pruebas automatizadas del frontend. Lint, chequeo de
+tipos y exportación verifican calidad estática y empaquetado, no los flujos
+funcionales contra la API.

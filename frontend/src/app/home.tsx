@@ -184,9 +184,7 @@ export default function HomeScreen() {
             <TouchableOpacity style={styles.viewTicketBtn} onPress={handleViewTicket}>
               <MaterialCommunityIcons name="ticket-confirmation" size={22} color="white" />
               <Text style={styles.queueBtnText}>
-                {user.queue.estado === "ATENDIDO"
-                  ? `Turno #${user.queue.turno_asignado ?? "—"}`
-                  : `Posición #${user.queue.numero_turno}`}
+                {`Posición #${user.queue.numero_turno}`}
               </Text>
             </TouchableOpacity>
           ) : (

@@ -2,6 +2,12 @@ Este documento define los escenarios de calidad para el sistema ComedorUNI, estr
 
 Se escribieron cinco escenarios a propósito de que no todos apunten a lo mismo: el sistema no solo tiene que responder rápido, también tiene que no perder cupos, no dejar que un estudiante se cuele con dos turnos, no perder eventos si algo se cae, y no arrastrar hoyos de seguridad en la configuración.
 
+> Estos escenarios son objetivos de aceptación, no resultados ya alcanzados. El estado
+> actual no incluye pruebas de carga, tolerancia a fallos ni despliegue con varias
+> réplicas; los componentes Redis Pub/Sub, outbox y mecanismos de recuperación se
+> consideran opciones de evolución que deben justificarse e implementarse antes de
+> presentarlos como capacidades reales.
+
 ---
 
 # Escenarios de Calidad — ComedorUNI
@@ -26,12 +32,12 @@ Se escribieron cinco escenarios a propósito de que no todos apunten a lo mismo:
 ### Escenario 2: Prevención de turnos duplicados por un mismo estudiante
 
 * **Fuente:** Estudiante autenticado o script malicioso.
-* **Estímulo:** Envío de dos o más peticiones HTTP POST simultáneas utilizando el mismo token JWT para solicitar un turno en el mismo bloque diario.
+* **Estímulo:** Envío de dos o más peticiones HTTP POST simultáneas usando el mismo `sid` de sesión activa para solicitar un turno en el mismo turno diario.
 * **Artefacto:** Base de datos PostgreSQL (índice único parcial sobre `estudiante_id` y `turno_dia_id`).
 * **Entorno:** Sesión activa con credenciales válidas.
 * **Respuesta:** La capa de persistencia intercepta el intento de inserción redundante mediante la restricción del índice único parcial, aborta la transacción secundaria y la API responde con un error explícito HTTP `409 Conflict`.
 * **Medida:** 0 estudiantes registrados con más de 1 turno en estado activo (`ESPERANDO` o `LLAMADO`) para un mismo bloque diario.
-* **Instrumento:** Colección de Postman ejecutada con Newman, o script `pytest`/`httpx`, que envía peticiones simultáneas con el mismo JWT y verifica la respuesta HTTP `409` y el estado final en PostgreSQL. Lo ejecuta el equipo de QA o el responsable de pruebas de seguridad.
+* **Instrumento:** Colección de Postman ejecutada con Newman, o script `pytest`/`httpx`, que envía peticiones simultáneas con el mismo `sid` y verifica la respuesta HTTP `409` y el estado final en PostgreSQL. Lo ejecuta el equipo de QA o el responsable de pruebas de seguridad.
 
 
 ---
@@ -57,11 +63,11 @@ Se escribieron cinco escenarios a propósito de que no todos apunten a lo mismo:
 
 * **Fuente:** Clientes móviles en espera de actualización del estado de la cola.
 * **Estímulo:** 500 conexiones WebSocket concurrentes solicitan el estado del turno mientras el backend escala a 3 réplicas en paralelo.
-* **Artefacto:** Administrador de WebSockets y coordinador Pub/Sub (Redis).
+* **Artefacto:** Administrador de WebSockets del backend y mecanismo de distribución entre réplicas, si se implementa.
 * **Entorno:** Backend distribuido tras un balanceador de carga durante el despacho activo de turnos.
-* **Respuesta:** El evento de cambio de estado se publica a través del bus de mensajes Redis Pub/Sub, distribuyendo la notificación a la réplica del backend que sostiene la conexión del cliente final.
+* **Respuesta:** Si se decide implementar escalamiento horizontal, el evento de cambio de estado se distribuye a la réplica que sostiene la conexión del cliente; el mecanismo (por ejemplo, Redis Pub/Sub) debe implementarse y validarse antes de aceptar el escenario.
 * **Medida:** Latencia de entrega de la notificación WebSocket a los clientes móviles menor a 500 ms desde el cambio de estado en la base de datos, con una tasa de éxito del 100%.
-* **Instrumento:** Script de carga para WebSocket con `k6` o Artillery contra tres réplicas del backend y Redis, registrando el tiempo entre el cambio en la base de datos y la recepción del evento en el cliente. Lo ejecuta el equipo de QA o el responsable de rendimiento.
+* **Instrumento:** Script de carga para WebSocket con `k6` o Artillery contra tres réplicas del backend y el mecanismo de distribución implementado, registrando el tiempo entre el cambio en la base de datos y la recepción del evento en el cliente. Lo ejecuta el equipo de QA o el responsable de rendimiento.
 
 
 ---
@@ -74,9 +80,9 @@ Se escribieron cinco escenarios a propósito de que no todos apunten a lo mismo:
 * **Estímulo:** Ejecución de escáneres estáticos de vulnerabilidades (`pip-audit`, `npm audit`) y pruebas de origen de solicitudes HTTP.
 * **Artefacto:** Archivos `requirements.txt`, `package.json` y configuración CORS en `main.py`.
 * **Entorno:** Entorno de staging/pre-producción.
-* **Respuesta:** El backend restringe la política CORS especificando orígenes permitidos explícitos (eliminando `allow_origins=["*"]`), fija las versiones exactas de las librerías en `requirements.txt` y reemplaza la dirección ngrok hardcodeada en el frontend por una variable de entorno `API_URL`.
+* **Respuesta:** El backend restringe la política CORS especificando orígenes permitidos explícitos (eliminando `allow_origins=["*"]`), fija las versiones exactas de las librerías en `requirements.txt` y mantiene las URL del cliente en variables de entorno Expo como `EXPO_PUBLIC_API_URL` y `EXPO_PUBLIC_WS_URL`.
 * **Medida:** 0 vulnerabilidades de severidad Alta o Crítica detectadas en dependencias y 100% de la configuración de red gestionada por variables de entorno.
-* **Instrumento:** `pip-audit` y `npm audit` corriendo en el pipeline de CI/CD, más una prueba automatizada con `pytest` o una colección de Postman/Newman que comprueba que solo se aceptan los orígenes permitidos y que no queda una URL de ngrok fija. La ejecución corresponde al responsable de CI/CD o DevSecOps.
+* **Instrumento:** `pip-audit` y `npm audit` corriendo en el pipeline de CI/CD, más una prueba automatizada con `pytest` o una colección de Postman/Newman que comprueba que solo se aceptan los orígenes permitidos y que no queda una URL temporal fija en el código. La ejecución corresponde al responsable de CI/CD o DevSecOps.
 
 
 ---
@@ -106,7 +112,7 @@ El escenario define correctamente el resultado esperado, pero no identifica el i
 
 ## Observación 2 — Seguridad: prevención de turnos duplicados
 
-El escenario menciona el índice único parcial, pero no señala la herramienta que comprobará el comportamiento ante solicitudes simultáneas ni quién será responsable de ejecutarla. Debe utilizarse, por ejemplo, una *colección de Postman ejecutada con Newman o un script automatizado con pytest/httpx, usando el mismo JWT y verificando las respuestas HTTP 409 y el estado final en PostgreSQL. La prueba debe ejecutarla el **equipo de QA o el responsable de pruebas de seguridad*.
+El escenario menciona el índice único parcial, pero no señala la herramienta que comprobará el comportamiento ante solicitudes simultáneas ni quién será responsable de ejecutarla. Debe utilizarse, por ejemplo, una *colección de Postman ejecutada con Newman o un script automatizado con pytest/httpx, usando el mismo `sid` y verificando las respuestas HTTP 409 y el estado final en PostgreSQL. La prueba debe ejecutarla el **equipo de QA o el responsable de pruebas de seguridad*.
 
 
 ## Observación 3 — Fiabilidad: fallos del broker RabbitMQ
