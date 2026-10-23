@@ -1,40 +1,41 @@
-# Documentación de ComedorUNI — SW707
+# Documentación Oficial de ComedorUNI — SW707
 
-Este directorio concentra los entregables académicos, documentos técnicos, modelos de arquitectura y especificaciones para el curso **Construcción de Software II (SW707 - 2026-II)** de la Universidad Nacional de Ingeniería (UNI).
-
----
-
-## 1. Entregable Principal del Examen Parcial
-
-- **[Documento Técnico del Examen Parcial (Markdown)](DocumentoTecnicoParcial.md):**  
-  Documento técnico oficial y completo listo para presentación en GitHub. Cumple los 11 puntos de la guía y los 9 criterios de la rúbrica oficial (100% de la calificación): gestión de dependencias, problemas de runtime, Design by Contract, programación defensiva, errores y excepciones, concurrencia, tolerancia a fallas, pruebas automatizadas y limitaciones.
-- **[Documento Técnico Parcial (Word)](DocumentoTecnicoParcial.docx):** Versión en formato DOCX.
-- **[Proyecto Integrador SW707 (Guía Oficial)](Proyecto_Integrador_SW707.docx):** Especificación oficial de la rúbrica, cronograma y pautas docentes.
+Este directorio contiene los entregables técnicos y de presentación para la **Etapa I (Examen Parcial — v1.0)** del curso **Construcción de Software II (SW707 - 2026-II)** de la Universidad Nacional de Ingeniería (UNI).
 
 ---
 
-## 2. Preparación para la Defensa y Exposición Técnica
+## 1. Entregable Técnico Principal
 
-- **[Guion de Exposición Técnica (Markdown)](guion-exposicion-sw707.md):** Guion de 40 minutos (35 min exposición + 5 min defensa) detallado minuto a minuto con recorrido a nivel de código y preguntas orientadoras.
-- **[Guion de Exposición (Word)](guion-exposicion-sw707.docx):** Versión en formato DOCX.
-- **[Presentación Oficial en PowerPoint](presentacion-sw707-40min.pptx):** Diapositivas editables con capturas, diagramas de arquitectura C4, flujo de negocio y contratos.
-- **[Avance Semanal hasta el Parcial](avance-parcial-sw707.md):** Registro de progreso semana a semana (semanas 1 a 8) y evidencias ejecutadas.
-- **[Prompts para Figma Make](prompts-figma-make.md):** Especificación y prompts para prototipar el flujo interactivo de negocio.
-
----
-
-## 3. Documentación Vigente del Sistema
-
-- **[Ficha del Sistema](ficha-del-sistema.md):** Ficha inicial con alcance, reglas de negocio e identificación del equipo.
-- **[Arquitectura C4 (Modelo y Leyenda)](c4/):** Modelo contrastado con el código fuente en DSL (`workspace.dsl`) y [leyenda explicativa](c4/leyenda.md).
-- **[Decisiones de Arquitectura (ADR)](adr/):**
-  - [ADR-001: Configuración de URL del Backend mediante Variables de Entorno](adr/ADR-001-backend-url-configuration.md).
-- **[Escenarios de Calidad](escenarios.md):** Escenarios de arquitectura y atributos de calidad esperados.
-- **[Bitácora de IA](bitacora-ia.md):** Registro transparente del uso de herramientas de IA generativa conforme al punto 22 de la guía.
+- 📄 **[Documento Técnico del Examen Parcial (Markdown)](DocumentoTecnicoParcial.md)**  
+  Documento técnico oficial y completo para la entrega de la Etapa I. Cumple al 100% con los 11 puntos de la guía y los 9 criterios de la rúbrica oficial (100% de la calificación):
+  1. Descripción del problema y usuarios.
+  2. Alcance y requisitos principales.
+  3. Arquitectura y decisiones técnicas.
+  4. Gestión de dependencias y reúso (10%).
+  5. Análisis de problemas de runtime (10%).
+  6. Design by Contract (15%) y Programación defensiva (10%).
+  7. Estrategia de errores y excepciones (15%).
+  8. Concurrencia y condiciones de carrera (15%).
+  9. Tolerancia a fallas y resiliencia (15%).
+  10. Pruebas automatizadas y evidencias (5%).
+  11. Limitaciones y evolución hacia el Examen Final (v2.0).
 
 ---
 
-## 4. Material de Clase y Archivo Histórico
+## 2. Preparación de la Defensa y Exposición Técnica
 
-- **[clase/](clase/):** Diapositivas oficiales del curso (Sesión 1 a Sesión 6) con los fundamentos teóricos de construcción de software.
-- **[historico/](historico/):** Antecedentes del prototipo previo (especificación original de procesos, requisitos funcionales y capturas).
+- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](guion-exposicion-sw707.md)**  
+  Estructura de sustentación minuto a minuto (35 min de exposición + 5 min de preguntas y defensa), con recorrido detallado a nivel de código fuente en frontend y backend.
+- 🎨 **[Prompts Maestros para Figma Make](prompts-figma-make.md)**  
+  Guía y prompts de ingeniería de interfaz con especificación completa de tokens (colores institucionales UNI, tipografía, radios, estados), pantallas del flujo de estudiante y micro-interacciones interactivas.
+- 📈 **[Avance Semanal hasta el Parcial](avance-parcial-sw707.md)**  
+  Bitácora de avance semanal (semanas 1 a 8), checklist de cierre de la línea base v1.0 y resumen de validaciones de compilación, linters y tests.
+
+---
+
+## 3. Especificación del Sistema
+
+- 📋 **[Ficha del Sistema](ficha-del-sistema.md)**  
+  Identificación del dominio, reglas de negocio esenciales, stack tecnológico y delimitación del alcance.
+- 🎯 **[Escenarios de Calidad](escenarios.md)**  
+  Definición de atributos de calidad para disponibilidad, latencia, integridad y concurrencia.

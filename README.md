@@ -16,10 +16,9 @@
 ## 📌 Enlaces Rápidos del Proyecto Integrador (SW707)
 
 - 📄 **[Documento Técnico del Examen Parcial (Markdown)](docs/DocumentoTecnicoParcial.md)** — *Documento oficial completo (Capítulos 1 al 11 y Rúbrica 100%)*
-- 📋 **[Rúbrica y Guía Oficial del Curso](docs/Proyecto_Integrador_SW707.docx)**
-- 📊 **[Presentación Técnica Oficial (PowerPoint)](docs/presentacion-sw707-40min.pptx)**
-- 🗣️ **[Guion para Exposición de 40 Minutos](docs/guion-exposicion-sw707.md)**
-- 🏛️ **[Arquitectura C4 y Diagramas](docs/c4/)**
+- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](docs/guion-exposicion-sw707.md)** — *Sustentación y recorrido a nivel de código*
+- 🎨 **[Prompts Maestros para Figma Make](docs/prompts-figma-make.md)** — *Guía de prototipado interactivo y tokens de diseño*
+- 📈 **[Avance Semanal hasta el Parcial](docs/avance-parcial-sw707.md)** — *Seguimiento semanal y cierre de línea base v1.0*
 - 🎥 **[Video Explicativo de la Implementación (YouTube)](https://www.youtube.com/watch?v=g4voiWE8LB8)**
 - 🎨 **[Prototipo Interactivo en Figma Make](https://www.figma.com/make/CoKplsedJ59U6BkDTlJLht/ComedorUni?fullscreen=1&t=N6J5IE1iyzJ2c1LJ-1&code-node-id=0-6)**
 
