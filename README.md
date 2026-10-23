@@ -18,7 +18,8 @@
 - 📄 **[Documento Técnico del Examen Parcial (Markdown)](docs/DocumentoTecnicoParcial.md)** — *Documento oficial completo (Capítulos 1 al 11 y Rúbrica 100%)*
 - 🏛️ **[Modelo C4 en 4 Niveles](docs/c4/README.md)** — *Contexto (N1), Contenedores (N2), Componentes M1-M7 (N3) y Despliegue (N4)*
 - 📐 **[Modelo de Vistas Arquitectónicas 4+1 de Kruchten](docs/arquitectura-4plus1.md)** — *Vistas Lógica, Procesos, Desarrollo, Física y Escenarios*
-- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](docs/guion-exposicion-sw707.md)** — *Sustentación y recorrido a nivel de código*
+- 🎙️ **[Guion Maestro de Exposición (10 Min) y Defensa (5 Min)](docs/guion-exposicion-10min.md)** — *Estructura minuto a minuto y banco de preguntas*
+- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](docs/guion-exposicion-sw707.md)** — *Sustentación extensa y recorrido a nivel de código*
 - 📋 **[Historial de Versiones (CHANGELOG.md)](CHANGELOG.md)** — *Registro formal según estándar Keep a Changelog*
 - 🎨 **[Prompts Maestros para Figma Make](docs/prompts-figma-make.md)** — *Guía de prototipado interactivo y tokens de diseño*
 - 📈 **[Avance Semanal hasta el Parcial](docs/avance-parcial-sw707.md)** — *Seguimiento semanal y cierre de línea base v1.0*

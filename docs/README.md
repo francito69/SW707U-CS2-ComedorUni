@@ -24,8 +24,10 @@ Este directorio contiene los entregables técnicos y de presentación para la **
 
 ## 2. Preparación de la Defensa y Exposición Técnica
 
-- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](guion-exposicion-sw707.md)**  
-  Estructura de sustentación minuto a minuto (35 min de exposición + 5 min de preguntas y defensa), con recorrido detallado a nivel de código fuente en frontend y backend.
+- 🎙️ **[Guion Maestro de Exposición (10 Min) y Defensa (5 Min)](guion-exposicion-10min.md)**  
+  Cronograma exacto minuto a minuto (10 láminas a 1 minuto por tema), qué mostrar en Figma/diagramas/código, qué decir palabra por palabra y banco de preguntas frecuentes del docente.
+- 🗣️ **[Guion Detallado para Exposición Extensa (40 Minutos)](guion-exposicion-sw707.md)**  
+  Sustentación extendida con recorrido minucioso a nivel de código fuente en frontend y backend.
 - 🎨 **[Prompts Maestros para Figma Make](prompts-figma-make.md)**  
   Guía y prompts de ingeniería de interfaz con especificación completa de tokens (colores institucionales UNI, tipografía, radios, estados), pantallas del flujo de estudiante y micro-interacciones interactivas.
 - 📈 **[Avance Semanal hasta el Parcial](avance-parcial-sw707.md)**  
