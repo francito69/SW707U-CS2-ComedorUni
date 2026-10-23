@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -26,3 +26,5 @@ docs/c4/plantuml.jar
 SW708-Informe-de-referencia-Entrega1.pdf
 
 .DS_Store
+~$*
+*.tmp
