@@ -8,6 +8,7 @@
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis)](https://redis.io/)
 [![Tests](https://img.shields.io/badge/Tests-76%20Passed-success?logo=pytest)](docs/DocumentoTecnicoParcial.md#10-pruebas-automatizadas-y-evidencias)
 [![SW707](https://img.shields.io/badge/SW707-Examen%20Parcial%20v1.0-blueviolet)](docs/DocumentoTecnicoParcial.md)
+[![Línea Base](https://img.shields.io/badge/Línea%20Base-v1.0%20(Freeze)-brightgreen)](docs/linea-base-v1.0.md)
 
 **ComedorUNI** es una plataforma distribuida y reactiva para la gestión inteligente de colas virtuales en el Comedor Universitario de la **Universidad Nacional de Ingeniería (UNI)**. Elimina las colas físicas a la intemperie mediante un flujo móvil sincronizado en tiempo real, respaldado por una arquitectura de microservicios de infraestructura resiliente, asíncrona y transaccionalmente segura.
 
@@ -15,14 +16,16 @@
 
 ## 📌 Enlaces Rápidos del Proyecto Integrador (SW707)
 
+- 🏷️ **[Línea Base de Configuración v1.0 (LB-PARCIAL-v1.0)](docs/linea-base-v1.0.md)** — *Congelamiento formal de SCM (IEEE 828), inventario de ECS y estado de auditoría al 100%*
 - 📄 **[Documento Técnico del Examen Parcial (Markdown)](docs/DocumentoTecnicoParcial.md)** — *Documento oficial completo (Capítulos 1 al 11 y Rúbrica 100%)*
+- 🔀 **[Documentación del Pull Request v1.0](docs/PULL_REQUEST.md)** — *Detalles técnicos de la integración hacia la rama principal `main`*
 - 🏛️ **[Modelo C4 en 4 Niveles](docs/c4/README.md)** — *Contexto (N1), Contenedores (N2), Componentes M1-M7 (N3) y Despliegue (N4)*
 - 📐 **[Modelo de Vistas Arquitectónicas 4+1 de Kruchten](docs/arquitectura-4plus1.md)** — *Vistas Lógica, Procesos, Desarrollo, Física y Escenarios*
 - 🎙️ **[Guion Maestro de Exposición (10 Min) y Defensa (5 Min)](docs/guion-exposicion-10min.md)** — *Estructura minuto a minuto y banco de preguntas*
 - 🗣️ **[Guion para Exposición Técnica de 40 Minutos](docs/guion-exposicion-sw707.md)** — *Sustentación extensa y recorrido a nivel de código*
 - 📋 **[Historial de Versiones (CHANGELOG.md)](CHANGELOG.md)** — *Registro formal según estándar Keep a Changelog*
 - 🎨 **[Prompts Maestros para Figma Make](docs/prompts-figma-make.md)** — *Guía de prototipado interactivo y tokens de diseño*
-- 📈 **[Avance Semanal hasta el Parcial](docs/avance-parcial-sw707.md)** — *Seguimiento semanal y cierre de línea base v1.0*
+- 📈 **[Avance Semanal hasta el Parcial](docs/avance-parcial-sw707.md)** — *Seguimiento semanal y cierre formal de línea base v1.0*
 - 🎥 **[Video Explicativo de la Implementación (YouTube)](https://www.youtube.com/watch?v=g4voiWE8LB8)**
 - 🎨 **[Prototipo Interactivo en Figma Make](https://www.figma.com/make/CoKplsedJ59U6BkDTlJLht/ComedorUni?fullscreen=1&t=N6J5IE1iyzJ2c1LJ-1&code-node-id=0-6)**
 
