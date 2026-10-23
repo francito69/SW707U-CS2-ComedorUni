@@ -61,3 +61,8 @@ docs/historico/
 
 # Documentos externos a la entrega de SW707
 docs/bitacora-ia.md
+
+# Guiones de exposición y prompts de apoyo interno (solo local)
+docs/guion-exposicion-10min.md
+docs/guion-exposicion-sw707.md
+docs/prompts-figma-make.md
