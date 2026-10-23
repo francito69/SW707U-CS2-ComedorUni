@@ -11,10 +11,12 @@ from .modules.auth.router import router as auth_router
 from .modules.menu.router import router as menu_router
 from .modules.queues.router import router as queue_router
 from .modules.config.router import router as config_router
-from .modules.queues.worker import inactivity_worker
+from .modules.queues.worker import active_service_worker, inactivity_worker
+from .modules.queues.manager import active_service_manager, manager as queue_manager
 from .modules.queues.service import ensure_turno_dia_hoy
 from .modules.notifications.consumer import start as start_m4
 from .modules.tracking.consumer import start as start_m5
+from .shared.ws_bus import start_ws_bus_listener
 
 
 async def _start_consumers_with_retry(max_attempts: int = 30, delay: int = 3):
@@ -54,8 +56,14 @@ async def lifespan(app: FastAPI):
         ensure_turno_dia_hoy()
     except Exception as e:
         print(f"[Setup] Error creando turno_dia: {e}")
+    # Cada worker de uvicorn necesita esta tarea corriendo para poder entregar
+    # mensajes a estudiantes conectados a OTRO worker (ver shared/ws_bus.py).
+    _spawn(start_ws_bus_listener(queue_manager, active_service_manager))
+    print("[App] Listener del bus de WebSockets iniciado")
     _spawn(inactivity_worker())
     print("[App] Worker de inactividad iniciado")
+    _spawn(active_service_worker())
+    print("[App] Worker de active-service iniciado")
     _spawn(_start_consumers_with_retry())
     yield
 

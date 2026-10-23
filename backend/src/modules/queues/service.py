@@ -79,6 +79,28 @@ def get_turno_dia_activo(conn=None) -> Optional[dict]:
     return turnos[0] if turnos else None
 
 
+def active_service_payload(conn=None) -> dict:
+    """
+    Snapshot serializable de los turnos activos. Usado por GET /queue/active-service
+    y por el WebSocket público /queue/ws/active-service (snapshot inicial + broadcast
+    cuando cambia, ver active_service_worker en worker.py).
+    """
+    turnos = get_turnos_dia_activos(conn)
+    if not turnos:
+        return {"activo": False, "turnos": []}
+    return {
+        "activo": True,
+        "turnos": [
+            {
+                "tipo":        t["tipo"],
+                "hora_inicio": str(t["hora_inicio"]),
+                "hora_cierre": str(t["hora_cierre"]),
+            }
+            for t in turnos
+        ],
+    }
+
+
 def get_turno_dia_activo_por_tipo(tipo: str, conn=None) -> Optional[dict]:
     turnos = get_turnos_dia_activos(conn)
     for t in turnos:
@@ -266,10 +288,9 @@ def crear_turno(estudiante_id: int, turno_dia_id: int, conn=None) -> int:
 
             cur.execute(
                 """
-                SELECT COUNT(*) + 1
+                SELECT COALESCE(MAX(numero_turno), 0) + 1
                 FROM turnos
                 WHERE turno_dia_id = %s
-                  AND estado NOT IN ('CANCELADO', 'ATENDIDO')
                 """,
                 (turno_dia_id,),
             )

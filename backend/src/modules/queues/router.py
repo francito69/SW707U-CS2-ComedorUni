@@ -5,15 +5,17 @@ from pydantic import BaseModel
 
 from ...shared.db import db_conn
 from ...shared.rabbitmq import publish
+from ...shared.ws_bus import publish_to_session
 from ..auth.redis_store import get_session
 from ..reassignment.service import llamar_siguiente
-from .manager import manager
+from .manager import active_service_manager, manager
 from .schemas import (
     ConfirmRequest, ConfirmResponse,
     JoinQueueRequest, JoinQueueResponse,
     TurnoStatusResponse,
 )
 from .service import (
+    active_service_payload,
     calcular_turno_asignado,
     cancelar_turno,
     confirmar_turno,
@@ -57,20 +59,7 @@ class PushTokenRequest(BaseModel):
 @router.get("/active-service")
 def active_service():
     """Retorna todos los turnos activos en este momento (público, sin autenticación)."""
-    turnos = get_turnos_dia_activos()
-    if not turnos:
-        return {"activo": False, "turnos": []}
-    return {
-        "activo": True,
-        "turnos": [
-            {
-                "tipo":        t["tipo"],
-                "hora_inicio": str(t["hora_inicio"]),
-                "hora_cierre": str(t["hora_cierre"]),
-            }
-            for t in turnos
-        ],
-    }
+    return active_service_payload()
 
 
 @router.post("/register-push-token")
@@ -187,14 +176,15 @@ async def confirm_presence(data: ConfirmRequest = Body(...)):
             "tipo_comida":   tipo_comida,
             "timestamp":     _now(),
         })
-        # Llamar al siguiente turno (grupo completo)
+        # Llamar al siguiente turno (grupo completo). Se publica al bus en vez
+        # de mandar directo al manager local: con varios workers de uvicorn,
+        # ese estudiante puede estar conectado a OTRO proceso (ver ws_bus.py).
         for sig in llamar_siguiente(turno_dia_id):
-            if manager.is_connected(sig["codigo"]):
-                await manager.send(sig["codigo"], {
-                    "type":    "llamado",
-                    "turno":   sig["numero_turno"],
-                    "mensaje": "¡Es tu turno! Confirma en los próximos 3 minutos.",
-                })
+            await publish_to_session(sig["codigo"], {
+                "type":    "llamado",
+                "turno":   sig["numero_turno"],
+                "mensaje": "¡Es tu turno! Confirma en los próximos 3 minutos.",
+            })
             await publish("turno.llamado", {
                 "evento":       "turno.llamado",
                 "codigo":       sig["codigo"],
@@ -238,6 +228,25 @@ def leave_queue(data: ConfirmRequest = Body(...)):
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 
+@router.websocket("/ws/active-service")
+async def active_service_ws(ws: WebSocket):
+    """
+    Conexión pública (sin sesión) al estado de turnos activos. Al conectar
+    recibe el snapshot actual; luego recibe un mensaje nuevo cada vez que el
+    servicio activo cambia (lo detecta active_service_worker en worker.py),
+    para que la pantalla de inicio se actualice sin que el usuario reingrese.
+    """
+    await active_service_manager.connect(ws)
+    try:
+        await ws.send_json(active_service_payload())
+        while True:
+            await ws.receive_text()   # mantiene viva la conexión; el contenido se ignora
+    except WebSocketDisconnect:
+        active_service_manager.disconnect(ws)
+    except Exception:
+        active_service_manager.disconnect(ws)
+
+
 @router.websocket("/ws/{sid}")
 async def queue_websocket(ws: WebSocket, sid: str):
     session = get_session(sid)
@@ -279,18 +288,17 @@ async def queue_websocket(ws: WebSocket, sid: str):
                     "tipo_comida":   tipo_comida,
                     "timestamp":     _now(),
                 })
-                await manager.send(codigo, {
+                await publish_to_session(codigo, {
                     "type":    "estado",
                     "estado":  "ATENDIDO",
                     "mensaje": "Turno confirmado. Dirígete al comedor.",
                 })
                 for sig in siguientes:
-                    if manager.is_connected(sig["codigo"]):
-                        await manager.send(sig["codigo"], {
-                            "type":    "llamado",
-                            "turno":   sig["numero_turno"],
-                            "mensaje": "¡Es tu turno! Confirma en los próximos 3 minutos.",
-                        })
+                    await publish_to_session(sig["codigo"], {
+                        "type":    "llamado",
+                        "turno":   sig["numero_turno"],
+                        "mensaje": "¡Es tu turno! Confirma en los próximos 3 minutos.",
+                    })
                     await publish("turno.llamado", {
                         "evento":       "turno.llamado",
                         "codigo":       sig["codigo"],

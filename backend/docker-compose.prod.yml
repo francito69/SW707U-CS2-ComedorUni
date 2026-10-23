@@ -1,0 +1,91 @@
+# Nombre de proyecto explícito: por defecto, Docker Compose usa el nombre
+# del DIRECTORIO como prefijo (no el nombre del archivo), así que sin esto
+# este compose compartiría volúmenes/red con backend/docker-compose.yml (el
+# de desarrollo) — mismo directorio, mismo prefijo por defecto. Ya nos pasó:
+# Postgres arrancó reutilizando datos viejos de una sesión de desarrollo,
+# con una contraseña distinta a la de .env.prod, y el backend no pudo autenticar.
+name: comedor-prod
+
+services:
+  postgres:
+    container_name: comedor-postgres
+    image: postgres:15
+    restart: unless-stopped
+    # Default de la imagen es max_connections=100. Con varios workers del
+    # backend (cada uno con su propio pool, ver DB_POOL_MAX_PER_WORKER abajo)
+    # eso se agota rápido — 300 da margen real sin tener que estar afinando
+    # el pool cada vez que cambias BACKEND_WORKERS.
+    command: postgres -c max_connections=300
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-comedor_uni}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env.prod}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    container_name: comedor-redis
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    container_name: comedor-rabbitmq
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?falta RABBITMQ_USER en .env.prod}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?falta RABBITMQ_PASS en .env.prod}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    container_name: comedor-backend
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:  { condition: service_healthy }
+      redis:     { condition: service_healthy }
+      rabbitmq:  { condition: service_healthy }
+    ports:
+      - "8000:8000"
+    environment:
+      WORKERS: ${BACKEND_WORKERS:-4}
+      # Nombres de servicio del compose, no localhost: dentro de la red de
+      # Docker cada contenedor se referencia por el nombre del servicio.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-comedor_uni}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env.prod}
+      # Pool por worker: con 4 workers x 15 = 60 conexiones máx, dentro del
+      # max_connections default de Postgres (100). Si subes BACKEND_WORKERS,
+      # baja este número o sube max_connections de Postgres.
+      DB_POOL_MIN: 1
+      DB_POOL_MAX: ${DB_POOL_MAX_PER_WORKER:-15}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:?falta RABBITMQ_USER en .env.prod}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:?falta RABBITMQ_PASS en .env.prod}
+
+volumes:
+  pg_data:
+  redis_data:

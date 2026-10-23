@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,7 +18,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "../constants/theme";
 import { useUser } from "../constants/UserContext";
 
-import { API_URL, NGROK_HEADERS } from "../constants/api";
+import { API_URL, WS_URL, NGROK_HEADERS } from "../constants/api";
+
+const ACTIVE_SERVICE_RECONNECT_MS = 5_000;
 const { height } = Dimensions.get("window");
 
 const MEAL_ICONS: Record<string, any> = {
@@ -44,10 +46,17 @@ export default function HomeScreen() {
   const [expandedMeal, setExpandedMeal] = useState<string | null>("ALMUERZO");
   const [activeService, setActiveService] = useState<{ tipo: string } | null>(null);
 
+  const activeServiceWs        = useRef<WebSocket | null>(null);
+  const activeServiceReconnect = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     fetchMenu();
-    fetchActiveService();
+    connectActiveServiceWS();
     syncQueue();
+    return () => {
+      activeServiceReconnect.current && clearTimeout(activeServiceReconnect.current);
+      activeServiceWs.current?.close();
+    };
   }, []);
 
   const syncQueue = async () => {
@@ -69,15 +78,29 @@ export default function HomeScreen() {
     } catch {}
   };
 
-  const fetchActiveService = async () => {
-    try {
-      const res = await fetch(`${API_URL}/queue/active-service`, { headers: NGROK_HEADERS });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.activo && data.turnos?.length) setActiveService({ tipo: data.turnos[0].tipo });
-        else setActiveService(null);
-      }
-    } catch {}
+  const applyActiveServicePayload = (data: any) => {
+    if (data?.activo && data.turnos?.length) setActiveService({ tipo: data.turnos[0].tipo });
+    else setActiveService(null);
+  };
+
+  const connectActiveServiceWS = () => {
+    const socket = new WebSocket(`${WS_URL}/queue/ws/active-service`);
+    activeServiceWs.current = socket;
+
+    socket.onmessage = (e) => {
+      try {
+        applyActiveServicePayload(JSON.parse(e.data));
+      } catch {}
+    };
+
+    // Se abre/cierra el almuerzo o la cena sin que el usuario reingrese a la
+    // pantalla: el backend hace broadcast por este socket cada vez que cambia
+    // (ver active_service_worker en backend/src/modules/queues/worker.py).
+    socket.onclose = () => {
+      activeServiceReconnect.current = setTimeout(connectActiveServiceWS, ACTIVE_SERVICE_RECONNECT_MS);
+    };
+
+    socket.onerror = () => socket.close();
   };
 
   const fetchMenu = async () => {
@@ -184,7 +207,9 @@ export default function HomeScreen() {
             <TouchableOpacity style={styles.viewTicketBtn} onPress={handleViewTicket}>
               <MaterialCommunityIcons name="ticket-confirmation" size={22} color="white" />
               <Text style={styles.queueBtnText}>
-                {`Posición #${user.queue.numero_turno}`}
+                {user.queue.estado === "ATENDIDO"
+                  ? `Turno #${user.queue.turno_asignado ?? "—"}`
+                  : `Posición #${user.queue.numero_turno}`}
               </Text>
             </TouchableOpacity>
           ) : (
