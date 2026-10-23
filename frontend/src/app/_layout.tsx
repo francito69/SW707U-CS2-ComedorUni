@@ -5,14 +5,13 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { UserProvider } from '../constants/UserContext';
+import { initRemoteConfig } from '../constants/api';
 
 SplashScreen.preventAutoHideAsync();
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -21,7 +20,10 @@ Notifications.setNotificationHandler({
 export default function RootLayout() {
   useEffect(() => {
     const hideSplash = async () => {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Resuelve la URL real del backend (Gist -> cache -> fallback) ANTES
+      // de mostrar cualquier pantalla, para que ningún WebSocket ni fetch
+      // salga con una URL vieja mientras esto todavía está resolviendo.
+      await initRemoteConfig();
       await SplashScreen.hideAsync();
     };
     hideSplash();

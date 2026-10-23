@@ -53,7 +53,7 @@ documentadas.
   para backend y npm/Expo para cliente.
 
 Las instrucciones vigentes están en el [README principal](../README.md). Los
-ejemplos de entorno son `backend/.env.example` y `frontend/src/.env.example`.
+ejemplos de entorno son `.env.example` y `frontend/src/.env.example`.
 
 ## 6. Riesgos de construcción identificados
 
@@ -67,7 +67,7 @@ ejemplos de entorno son `backend/.env.example` y `frontend/src/.env.example`.
   recuperación durante la operación.
 - La capa de dependencias frontend reportó alertas de auditoría en el corte actual;
   deben revisarse sin aplicar actualizaciones automáticas sin evaluación.
-- No existe aún una suite de pruebas automatizadas de negocio en `backend/tests/`;
+- No existe aún una suite de pruebas automatizadas de negocio en `tests/`;
   tampoco hay pruebas automatizadas frontend.
 
 Consulta el [avance SW707 hasta el parcial](avance-parcial-sw707.md) y el
