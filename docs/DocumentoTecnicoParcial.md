@@ -60,12 +60,12 @@ El proyecto **ComedorUNI** implementa un sistema distribuido y reactivo de **col
 ### 2.1 Alcance del Examen Parcial (Versión v1.0)
 La Etapa I del proyecto establece la **línea base verificable y robusta** del sistema, garantizando que el flujo de negocio no colapse bajo condiciones adversas de concurrencia, sobrecupo o fallos transitorios:
 
-- ✅ **Autenticación y Captura de Identidad:** Extracción segura de datos estudiantiles desde el Portal Alumnos UNI, persistencia en `estudiantes` y creación de sesión en Redis con TTL de 24 horas.
+- ✅ **Autenticación y Captura de Identidad:** Extracción segura de datos estudiantiles desde el Portal Alumnos UNI, persistencia en `estudiantes` y creación de sesión en Redis con TTL de 8 horas.
 - ✅ **Gestión de Turnos y Capacidad:** Encolamiento controlado con verificación de unicidad de estudiante y límite de aforo diario.
 - ✅ **Sincronización en Tiempo Real:** Canal bidireccional WebSocket para estado de cola, emisión de pings y avisos de llamado.
 - ✅ **Desacoplamiento Asíncrono por Eventos:** Publicación en RabbitMQ (Topic Exchange `comedor`) de eventos de dominio (`turno.encolado`, `turno.llamado`, `turno.cancelado`, `turno.atendido`).
 - ✅ **Consumidores Especializados:**
-  - **Módulo M4 (Notificaciones):** Escucha `turno.llamado` y `turno.cancelado` y despacha notificaciones push con latencia `< 2s`.
+  - **Módulo M4 (Notificaciones):** Escucha `turno.llamado` y `turno.cancelado` y despacha notificaciones push a través de Expo Push Service.
   - **Módulo M5 (Seguimiento):** Escucha `turno.encolado` y `turno.atendido` y registra la trazabilidad histórica de asistencia de forma idempotente en PostgreSQL.
 - ✅ **Worker Autónomo de Inactividad:** Tarea asíncrona en segundo plano que inspecciona cada 60s los turnos llamados sin confirmación (timeout de 3 minutos), los cancela automáticamente y dispara la reasignación en grupos (`batch_size = raciones_max / 10`).
 
@@ -113,6 +113,7 @@ graph TD
     API --> M1
     API --> M2
     M1 -->|Lectura / Escritura sid| RD
+    M2 -->|Bus WebSocket entre workers y lock de líder| RD
     M1 -->|Upsert Estudiante| PG
     M2 -->|SELECT FOR UPDATE / Transacciones| PG
     M2 -->|Publica eventos de dominio| RMQ
@@ -126,9 +127,11 @@ graph TD
 
 ### 3.2 Decisiones Registradas de Arquitectura (ADR)
 - **ADR-001 (Configuración Dinámica de URLs del Backend):**  
-  Se erradicó el *hardcoding* de la IP en `frontend/src/constants/api.ts`. El cliente ahora resuelve las direcciones de API y WebSocket mediante variables de entorno `EXPO_PUBLIC_API_URL` y `EXPO_PUBLIC_WS_URL`. Esto permite alternar limpiamente entre emulador Android (`10.0.2.2:8000`), navegador web local (`localhost:8000`) y dispositivo físico sobre LAN (`192.168.x.x:8000`).
+  Se erradicó el *hardcoding* de la IP en `frontend/src/constants/api.ts`. Al arrancar, la app lee la URL vigente del backend desde un Gist de GitHub (así un cambio de URL del túnel no obliga a recompilar), la guarda en `expo-secure-store` y, si no puede leerla, usa `EXPO_PUBLIC_API_URL` / `EXPO_PUBLIC_WS_URL`. Esto permite alternar entre emulador Android (`10.0.2.2:8000`), navegador local, dispositivo en la LAN o el túnel público.
 - **Conservación de PostgreSQL como Fuente Única de Verdad:**  
-  Redis se restringe exclusivamente al almacenamiento volátil de sesiones (`sid`). Toda regla de negocio de colas, aforo, orden FIFO y numeración se resuelve transaccionalmente en PostgreSQL.
+  Toda regla de negocio de colas, aforo, orden y numeración se resuelve transaccionalmente en PostgreSQL. Redis guarda solo estado volátil o de coordinación: sesiones (`sid`), el bus de WebSockets entre workers y el lock de líder de las tareas periódicas. Si Redis pierde un aviso, el estado correcto sigue en PostgreSQL.
+- **Varios procesos de API (6 workers en producción):**  
+  `run.py` levanta `WORKERS` procesos de uvicorn para usar varios núcleos. Cada proceso tiene sus propias conexiones WebSocket, así que los avisos se reparten por Redis Pub/Sub y las tareas periódicas usan un lock para correr una sola vez por ciclo (sección 8.3).
 - **Prevención de Recolección de Basura en Tareas Asíncronas (`_background_tasks`):**  
   En `backend/src/main.py`, FastAPI almacena referencias fuertes en el conjunto `_background_tasks` para el worker de inactividad y los consumidores de RabbitMQ. Si se crearan con `asyncio.create_task()` sin guardar referencia, el Garbage Collector de Python destruiría la tarea silenciosamente al no haber referencias externas en el heap, deteniendo el procesamiento sin arrojar excepción.
 
@@ -136,246 +139,298 @@ graph TD
 
 ## 4. Gestión de Dependencias y Reúso
 
-### 4.1 Inventario de Dependencias Directas y Justificación Técnica
-El principio de reúso responsable de software (Sesión 1) exige evaluar rigurosamente el costo-beneficio de cada biblioteca de terceros antes de incorporarla al proyecto:
+### 4.1 Política de versiones
+- **Backend:** `backend/requirements.txt` fija **versiones exactas** (`==`): las mismas con las que pasan la suite de pruebas y la prueba de carga. Las herramientas de desarrollo (`pytest`, `pip-audit`) están aparte, en `backend/requirements-dev.txt`. Se verificó que el conjunto se instala desde cero en un entorno limpio de Python 3.12.
+- **Frontend:** `frontend/src/package-lock.json` fija el árbol completo; `package.json` usa los rangos `~` que recomienda Expo para su SDK.
 
-| Componente | Dependencia | Versión Declarada / Resuelta | Licencia | Justificación Técnica y Reúso |
-|---|---|:---:|:---:|---|
-| **Backend** | `fastapi[websockets]` | `>=0.110.0` | MIT | Framework asíncrono ASGI de alto rendimiento con validación automática y soporte nativo WebSocket. |
-| **Backend** | `uvicorn[standard]` | `>=0.29.0` | BSD-3-Clause | Servidor web ASGI de grado industrial con uvloop y httptools compilados en C. |
-| **Backend** | `psycopg2-binary` | `>=2.9.9` | LGPL / BSD | Adaptador PostgreSQL C optimizado; soporta cursores nativos y transacciones ACID. |
-| **Backend** | `aio-pika` | `>=9.4.0` | Apache 2.0 | Cliente asíncrono para AMQP 0-9-1; maneja `connect_robust` y reconexión automática de canales. |
-| **Backend** | `redis` | `>=5.0.0` | MIT | Cliente oficial Redis con soporte de pooling y expiración de llaves por TTL. |
-| **Backend** | `beautifulsoup4` | `>=4.12.0` | MIT | Parser HTML tolerante a fallos para extraer información del DOM del Portal Alumnos UNI. |
-| **Backend** | `deepface` / `opencv` | `>=0.0.90` | MIT / Apache 2.0 | Comparación biométrica facial 1:1 contra fotografía oficial del carné universitario. |
-| **Frontend** | `expo` / `expo-router` | `~51.0.0` | MIT | Framework móvil multiplataforma basado en React Native con enrutamiento basado en archivos. |
-| **Frontend** | `react-native-webview` | `13.8.6` | MIT | Contenedor web aislado para autenticar al usuario de forma segura dentro del dominio universitario. |
-| **Frontend** | `expo-notifications` | `~0.28.0` | MIT | Módulo unificado para obtención de Push Token de hardware y recepción de alertas en segundo plano. |
+### 4.2 Inventario de dependencias directas
 
-### 4.2 Análisis de Dependencias Transitivas y Riesgos de Seguridad
-- **Cadena de Suministro:** Se auditaron las dependencias del frontend mediante `npm audit`. Se detectaron 53 alertas menores relacionadas con herramientas del ecosistema de empaquetado de React Native/Metro. Siguiendo el principio de **prudencia constructiva**, no se aplicó `npm audit fix --force` de forma ciega para no romper contratos semánticos con la versión de Expo SDK 51.
-- **Aislamiento de Cargas Pesadas:** `deepface`, `opencv-python` y `tf-keras` poseen dependencias de runtime de gran huella de memoria (C++ y TensorFlow). El sistema carga sus modelos bajo demanda para no penalizar el tiempo de arranque de los endpoints de colas y turnos.
+| Componente | Dependencia | Versión | Para qué se usa en el código |
+|---|---|:---:|---|
+| Backend | `fastapi` | 0.141.1 | API HTTP y WebSocket; validación Pydantic en la frontera (sección 6). |
+| Backend | `uvicorn[standard]` | 0.53.0 | Servidor ASGI; en producción levanta `WORKERS` procesos (`run.py`). |
+| Backend | `python-dotenv` | 1.2.3 | Carga `backend/.env`. |
+| Backend | `psycopg2-binary` | 2.9.13 | Driver de PostgreSQL y `ThreadedConnectionPool` (`shared/db.py`). |
+| Backend | `redis` | 8.1.0 | Sesiones, bus de WebSockets entre workers y lock de líder. |
+| Backend | `aio-pika` | 10.0.1 | AMQP asíncrono; `connect_robust` reconecta solo. |
+| Backend | `httpx` | 0.28.1 | Envío de push a Expo (`shared/push.py`) y `TestClient` en pruebas. |
+| Backend | `beautifulsoup4` | 4.15.0 | Lectura del HTML del Portal Alumnos UNI. |
+| Backend | `deepface` + `tf-keras` | 0.0.101 / 2.21.0 | Verificación facial (Facenet). `tf-keras` lo exige deepface con TensorFlow ≥ 2.16. |
+| Backend | `opencv-python` | 4.10.0.84 | Detector de rostros de deepface. Fijado en 4.x: la 5.x eliminó los Haar cascades (sección 5.4). |
+| Backend | `pillow` / `numpy` | 13.0.0 / 2.5.3 | Decodificar la foto base64 a matriz. |
+| Frontend | `expo` / `expo-router` | ~54.0.34 / ~6.0.23 | App móvil multiplataforma con rutas por archivo. |
+| Frontend | `react-native` | 0.81.5 | Runtime de la app. |
+| Frontend | `react-native-webview` | 13.15.0 | Login contra el Portal Alumnos dentro de la app. |
+| Frontend | `expo-notifications` / `expo-secure-store` | ~0.32.17 / ~15.0.8 | Token push y caché segura de la URL del backend. |
+
+### 4.3 Auditoría de seguridad y depuración del inventario
+- **`pip-audit -r backend/requirements.txt`** (pip-audit 2.10.1, 22-oct-2026) revisó **90 paquetes** (directos y transitivos). Único hallazgo: **Pillow 12.3.0 con 35 CVE**, todas corregidas en 13.0.0. Se subió a **13.0.0** y se validó instalando el conjunto desde cero y corriendo la suite y la prueba de carga.
+- **Dependencia sin uso eliminada:** `requests` estaba declarada pero ningún módulo la importa (deepface la trae como transitiva).
+- **Dependencia usada sin declarar:** `numpy` se importa en `auth/biometric.py`; ahora está declarada con su versión.
+
+### 4.4 Reúso
+Se reutiliza lo existente antes de escribir código propio: el pool de `psycopg2` (envuelto, no reimplementado), la reconexión de `aio-pika`, la validación de Pydantic y el detector de deepface. Solo se escribió código propio donde no había pieza que reutilizar para este caso: el bus de WebSockets entre workers (`shared/ws_bus.py`) y el lock de líder (`shared/leader_lock.py`), de unas 40 líneas cada uno.
+
+**Costo conocido:** `deepface` importa TensorFlow al arrancar cada worker. Con 6 workers el modelo se carga 6 veces (tiempo de arranque y memoria). Es la dependencia más pesada del sistema y está registrada como limitación (sección 11).
 
 ---
 
 ## 5. Análisis de Problemas de Runtime
 
-De acuerdo con la teoría de **Software Runtime Dynamics (Sesión 2)**, los problemas de tiempo de ejecución no siempre se manifiestan como errores sintácticos de compilación, sino como condiciones anómalas en el ciclo de vida del proceso, desajustes ambientales o agotamiento de recursos.
+Problemas que aparecieron **al ejecutar** el sistema, no al compilarlo. Para cada uno: síntoma, causa y corrección.
 
-### 5.1 Desajuste de Puerto de Persistencia (Host Port Mismatch)
-- **Diagnóstico:** El archivo `backend/docker-compose.yml` mapea el puerto del contenedor PostgreSQL `5432` hacia el host en `5433` (`5433:5432`) para evitar colisiones con instancias locales preexistentes de PostgreSQL. Sin embargo, `backend/src/shared/db.py` definía por defecto `DB_PORT = 5432`.
-- **Impacto de Runtime:** Un arranque del backend sin archivo `.env` configurado intentaba conectarse al puerto 5432, arrojando una excepción `psycopg2.OperationalError: Connection refused` de forma silenciosa si no se supervisaba el log.
-- **Mitigación:** Se documentó y forzó la variable `DB_PORT=5433` en `backend/.env.example` y se implementó un log explícito en `db.py`: `print(f"[DB] Conectando a {host}:{port}/{dbname} como {user}")`.
+### 5.1 Desajuste de puerto de PostgreSQL
+- **Síntoma:** `psycopg2.OperationalError: Connection refused` al arrancar sin `.env`.
+- **Causa:** Compose publica PostgreSQL en el puerto `5433` del host (`5433:5432`) y `shared/db.py` usaba `5432` por defecto.
+- **Corrección:** `DB_PORT=5433` en `backend/.env.example`, y el log de arranque del pool indica a qué host y puerto se conecta (`Creando pool (15-15) hacia localhost:5433/comedor_uni`).
 
-### 5.2 Disparidad Temporal y Falla Silenciosa al Arranque de RabbitMQ
-- **Diagnóstico:** En un despliegue con Docker Compose, el contenedor del backend puede iniciar su Event Loop antes de que el contenedor de RabbitMQ termine de inicializar sus demonios Erlang en el puerto `5672`.
-- **Impacto de Runtime:** Si el backend intentaba conectar los consumidores M4/M5 de forma síncrona al arrancar, el proceso colapsaba por fallo de socket (`AMQPConnectionError`). Si se capturaba el error con un `try-except` pasivo sin reintento, la API arrancaba pero los consumidores quedaban muertos para siempre: los estudiantes nunca recibían notificaciones push.
-- **Mitigación:** En `backend/src/main.py`, se implementó la rutina de supervivencia `_start_consumers_with_retry(max_attempts=30, delay=3)`:
-```python
-async def _start_consumers_with_retry(max_attempts: int = 30, delay: int = 3):
-    for attempt in range(1, max_attempts + 1):
-        try:
-            await start_m4()
-            await start_m5()
-            print("[App] Consumers RabbitMQ iniciados")
-            return
-        except Exception as e:
-            print(f"[App] Intento {attempt}/{max_attempts}: RabbitMQ no disponible ({e}); reintento en {delay}s")
-            await asyncio.sleep(delay)
-    print("[App] No se pudieron iniciar los consumers tras varios intentos")
+### 5.2 Backend que arranca antes que RabbitMQ
+- **Síntoma:** con Compose, los consumers M4/M5 fallaban al conectar y quedaban apagados en silencio: no salían push.
+- **Corrección:** `_start_consumers_with_retry` (`main.py`) reintenta 30 veces cada 3 s. Si se rinde, lo registra como `ERROR` y devuelve `False`, de modo que el problema queda visible en el log.
+
+### 5.3 Pool de conexiones que no reutilizaba ni esperaba (detectado con Locust)
+- **Síntoma:** en la primera prueba de carga (1000 estudiantes simultáneos) hubo **11,7 % de errores 500**: `connection pool exhausted` (1405 veces) y `Address already in use` (198 veces).
+- **Causa 1:** `psycopg2` solo guarda una conexión devuelta si en el pool hay menos de `minconn` libres; con `minconn=1` casi cada request abría y cerraba una conexión TCP nueva, hasta agotar los puertos efímeros de Windows.
+- **Causa 2:** al llegar a `maxconn`, `ThreadedConnectionPool` **lanza** `PoolError` en vez de esperar.
+- **Corrección (`shared/db.py`):** `minconn = maxconn`, y un `BoundedSemaphore` hace que el request **espere** una conexión libre hasta `DB_POOL_TIMEOUT` (10 s). Recién entonces falla, con un 503 controlado. Resultado: **0 errores** en la misma prueba (sección 8.4).
+
+### 5.4 opencv-python 5 rompió la verificación facial
+- **Síntoma:** `/verify-biometric` respondía 500 con `ValueError: Confirm that opencv is installed`.
+- **Causa:** `opencv-python` 5.x dejó de incluir los archivos Haar cascade que usa el detector `opencv` de deepface.
+- **Corrección:** versión fijada en `4.10.0.84` (sección 4).
+
+### 5.5 Event loop bloqueado por `POST /queue/join`
+- **Síntoma:** pedir turno era el endpoint más lento bajo carga, y mientras tanto el mismo worker atendía con retraso los WebSockets y el resto de requests.
+- **Causa:** `join_queue` es `async def` (publica eventos con `await`), pero llamaba a la base de forma síncrona. Mientras esperaba el candado `FOR UPDATE`, congelaba el event loop de todo su worker.
+- **Corrección:** la parte de base de datos de `/join`, `/confirm` y de los handlers de WebSocket corre con `run_in_threadpool`; el event loop queda libre. Efecto medido en la sección 8.4.
+
+### 5.6 `localhost` lento en Windows (artefacto de medición)
+Con `localhost`, cada conexión nueva intenta primero IPv6 (`::1`); uvicorn escucha solo en IPv4 y el reintento costaba unos 2 s por conexión. Con `127.0.0.1` la conexión tarda menos de 1 ms. Las mediciones de carga usan `127.0.0.1`.
+
+### 5.7 Instrumento de observación: logging con id de request
+Los 39 `print()` del backend se reemplazaron por `logging` con niveles (`shared/logs.py`). Cada request recibe un id (el `X-Request-ID` del cliente o uno generado), que aparece en cada línea de log y vuelve en la cabecera y el cuerpo de la respuesta. Con ese id, el error que ve un usuario se ubica en el log:
+
+```text
+2026-10-22 23:40:01 ERROR   [pid 21344] [req 3f9a1c0b77e2] src.shared.http_errores: POST /queue/join -> 503, dependencia no disponible
 ```
+
+El nivel se controla con `LOG_LEVEL`. Las conexiones de WebSocket se registran en `DEBUG` para no inundar el log bajo carga.
 
 ---
 
 ## 6. Contratos y Programación Defensiva
 
-Siguiendo los principios de **Design by Contract (Bertrand Meyer, Sesión 3)** y la **Arquitectura de Confianza (Sesión 4)**, el sistema define fronteras claras de responsabilidad y aplica el concepto de **Barricada (Digital Airlock)**.
+### 6.1 Cómo se expresa un contrato en el código
+`shared/contratos.py` define `requiere()` (precondición) y `asegura()` (postcondición o invariante). Ambas lanzan `ContratoViolado`, y a diferencia de `assert`, no se desactivan con `python -O`. Se separan dos casos:
+- **Contrato violado** (bug del programa, por ejemplo un id negativo que nunca debió llegar): `ContratoViolado`, respuesta 500 y traza en el log.
+- **Regla de negocio incumplida** (por ejemplo, no quedan raciones): `ErrorDeDominio`, respuesta 4xx sin traza (sección 7).
 
-### 6.1 Matriz de Contratos Formales de la API
+El caso de uso central, `crear_turno` (`modules/queues/service.py`), declara su contrato completo:
 
-| Operación | Precondiciones ($P$) | Postcondiciones ($Q$) | Invariantes del Sistema ($I$) | Manejo ante Incumplimiento |
-|---|---|---|---|---|
-| **POST `/join`** (Unirse a la cola) | 1. `sid` válido con sesión activa en Redis.<br>2. Estudiante registrado en PostgreSQL.<br>3. Turno de hoy abierto y en horario vigente.<br>4. Estudiante no posee turno activo en el día.<br>5. Aforo restante $> 0$. | 1. Registro creado en tabla `turnos` con estado `ESPERANDO`.<br>2. Se retorna número de turno monotónico $> 0$.<br>3. Evento `turno.encolado` emitido a RabbitMQ. | - Capacidad total asignada $\le raciones\_max$.<br>- Máximo un turno activo por alumno por servicio. | `401 Unauthorized` si sesión expiró.<br>`404 Not Found` si alumno no existe.<br>`409 Conflict` si ya tiene turno.<br>`400 Bad Request` si aforo agotado. |
-| **POST `/confirm`** (Confirmar presencia) | 1. `sid` válido.<br>2. Turno existe y pertenece al estudiante.<br>3. Estado actual del turno es `LLAMADO`. | 1. Estado cambia a `ATENDIDO`.<br>2. Se fija `confirmado_at = NOW()`.<br>3. Evento `turno.atendido` emitido a RabbitMQ. | - No se puede confirmar un turno `ESPERANDO` o `CANCELADO`.<br>- Transición unidireccional (irreversible). | `404 Not Found` si no tiene turno.<br>`409 Conflict` si el turno no está en estado `LLAMADO`. |
-| **POST `/cancel`** (Cancelar turno) | 1. `sid` válido.<br>2. Turno en estado cancelable (`ESPERANDO` o `LLAMADO`). | 1. Estado cambia a `CANCELADO`.<br>2. Se fija `cancelado_at = NOW()`.<br>3. Cupo liberado para el turno diario. | - Un turno `ATENDIDO` jamás puede cancelarse.<br>- No se generan inconsistencias en el histórico. | `400 Bad Request` si se intenta cancelar un turno ya atendido o inexistente. |
+```python
+requiere(estudiante_id > 0, "estudiante_id debe ser positivo")
+requiere(turno_dia_id > 0, "turno_dia_id debe ser positivo")
+requiere(raciones_max > 0, "raciones_max debe ser positivo")
+...                                  # sección crítica (sección 8.2)
+asegura(numero == ultimo_numero + 1, "el número de turno es el máximo previo + 1")
+asegura(activos + 1 <= raciones_max, "los turnos activos no superan raciones_max")
+```
 
-### 6.2 Programación Defensiva y Barricadas (Digital Airlock)
-- **Barricada en la Frontera HTTP:** Pydantic actúa como aduana de entrada (`schemas.py`), filtrando tipos, longitudes mínimas y expresiones regulares antes de que los datos alcancen la capa de servicios:
-  - Longitud estricta de `sid` (entre 10 y 128 caracteres).
-  - Tipos de comida restringidos mediante whitelist por Regex: `^(ALMUERZO|CENA|PRUEBA)$`.
-- **Barricada de Persistencia (Defensa en Profundidad):**  
-  Aunque la lógica del servicio valide el aforo y la duplicidad, la base de datos PostgreSQL actúa como la **última barricada inquebrantable**:
-  ```sql
-  CREATE UNIQUE INDEX idx_turnos_activo 
-  ON turnos (estudiante_id, turno_dia_id) 
-  WHERE estado != 'CANCELADO';
-  ```
-  Si una condición de carrera sobrepasara la capa de aplicación, la base de datos aborta la transacción con una violación de índice único, evitando la corrupción del estado.
+Si una postcondición falla, la transacción no se confirma.
+
+### 6.2 Matriz de contratos de la API
+
+| Operación | Precondiciones (si fallan → respuesta) | Postcondiciones | Invariantes |
+|---|---|---|---|
+| **`POST /queue/join`** | `sid` UUID v4 y `tipo` ∈ {ALMUERZO, CENA, PRUEBA} → 422 · sesión activa → 401 `sesion_invalida` · turno de ese tipo abierto ahora → 400 `turno_no_activo` · estudiante registrado → 404 `estudiante_no_registrado` · turno del día habilitado → 409 `turno_no_habilitado` · sin turno activo → 409 `turno_duplicado` · quedan raciones → 400 `sin_raciones` | Turno `ESPERANDO` con número = máximo previo + 1; la respuesta incluye `raciones_restantes`; se publica `turno.encolado` (best-effort). | Turnos activos ≤ `raciones_max`. Un solo turno activo por estudiante y servicio. |
+| **`POST /queue/confirm`** | Sesión activa → 401 · tiene turno activo → 404 `sin_turno_activo` · el turno no está `ATENDIDO` ni `CANCELADO` → 400 `turno_finalizado` | Si estaba `LLAMADO`: pasa a `ATENDIDO`, se fija `confirmado_at`, se publica `turno.atendido` y se llama al siguiente grupo. Si estaba `ESPERANDO`: solo renueva `ultimo_ping` ("Sigo aquí") y responde `ESPERANDO`. | `ATENDIDO` y `CANCELADO` son estados finales. |
+| **`POST /queue/leave`** | Sesión activa → 401 | `ESPERANDO`/`LLAMADO` pasa a `CANCELADO` y libera la ración. Idempotente: sin turno o con turno terminado responde 200 sin cambios. | Un turno `ATENDIDO` nunca se cancela. |
+| **`GET /queue/status`** | `sid` UUID v4 → 422 · sesión → 401 · turno hoy → 404 | Estado, posición y turno en atención; grupo asignado solo si está `ATENDIDO`. | Grupo asignado entre 1 y 10. |
+| **`POST /parse-data`** | HTML ≤ 5 MB por campo → 422 · código UNI válido en el HTML → 422 `datos_portal_invalidos` | Estudiante registrado o actualizado y sesión creada en Redis (8 h). | Un código UNI identifica a un solo estudiante. |
+
+### 6.3 Barricadas de programación defensiva
+Todo dato externo se valida en la frontera, antes de llegar a la lógica de negocio o a la base:
+
+| Dato externo | Validación | Dónde |
+|---|---|---|
+| `sid` (cuerpo y query string) | UUID v4: es lo único que genera `/parse-data` | `shared/validacion.py` (`Sid`, `UUID4_PATTERN`) |
+| `tipo` de turno | Lista cerrada (`Literal`) | `queues/schemas.py` |
+| `push_token` | 1 a 255 caracteres, el tamaño de la columna | `queues/schemas.py` |
+| Foto biométrica | 1 a 8 000 000 caracteres | `auth/schemas.py` |
+| HTML del portal | ≤ 5 000 000 caracteres por campo; `device_id` ≤ 128 | `auth/schemas.py` |
+| Código de alumno extraído del HTML | `^[0-9]{8}[A-Z]$`, normalizado a mayúsculas | `auth/service.py` |
+
+**Bug real que corrigió la barricada del código UNI:** antes, si el HTML llegaba sin código, el parser devolvía `"No encontrado"` y se creaba un estudiante y una sesión con ese código. Todos los logins con HTML roto terminaban compartiendo la misma identidad. Ahora se responde 422 y no se crea nada.
+
+**Defensa en profundidad:** toda consulta SQL usa parámetros (`%s`; una prueba revisa que ningún `execute` arme SQL con f-strings o `%`), y la base es la última barrera: `idx_turnos_activo` (un turno activo por estudiante), `idx_turnos_numero_turno_unico` (números únicos) y `CHECK` sobre los estados.
 
 ---
 
 ## 7. Estrategia de Errores y Excepciones
 
-De acuerdo con **Resilient and Observable Systems (Sesión 5)**, el sistema aplica una rigurosa separación conceptual entre **Condiciones de Error** y **Excepciones de Runtime**.
+### 7.1 Tres clases de problemas, tres respuestas
 
-### 7.1 Condición de Error vs. Excepción de Runtime
-1. **Condición de Error (Esperada y parte de las reglas del negocio):**  
-   - *"El alumno ya reservó turno"* $\rightarrow$ Se resuelve con `HTTP 409 Conflict`.
-   - *"Se agotaron las raciones del día"* $\rightarrow$ Se resuelve con `HTTP 400 Bad Request`.
-   - *"La sesión expiró por inactividad"* $\rightarrow$ Se resuelve con `HTTP 401 Unauthorized`.  
-   No representan anomalías de programación; son flujos alternativos contemplados en el dominio.
-2. **Excepción de Runtime (Falla ambiental o técnica inesperada):**  
-   - Caída del socket de PostgreSQL o pérdida de conexión con RabbitMQ.  
-   Deben ser capturadas en la frontera de la API, traducidas a `HTTP 503 Service Unavailable`, y registradas con información diagnóstica sin filtrar stacktraces ni credenciales al cliente.
+| Clase | Ejemplos | Respuesta HTTP | Registro en el log |
+|---|---|---|---|
+| **Condición de error de negocio** (`ErrorDeDominio`, `shared/errores.py`) | Sesión vencida, turno duplicado, sin raciones, turno finalizado | 4xx con `codigo` estable (`sin_raciones`, `turno_duplicado`...) | `INFO`, sin traza: es un flujo esperado |
+| **Falla de infraestructura** | PostgreSQL o Redis caídos, pool sin conexión libre | 503 `servicio_no_disponible`, mensaje genérico | `ERROR` con traza |
+| **Error inesperado** (bug, contrato violado) | Cualquier otra excepción | 500 `error_interno`, mensaje genérico | `ERROR` con traza |
 
-### 7.2 Erradicación del Antipatrón *Log and Throw*
-En arquitecturas multicapa, capturar una excepción, registrarla con `log.error()` y volver a lanzarla en cada nivel (`catch (...) { log.error(...); throw; }`) satura los registros con ruido duplicado.  
-**Regla implementada:** Las capas de acceso a datos (`shared/db.py`) y de servicio propagan la excepción enriquecida; únicamente el controlador de frontera (Router de FastAPI) efectúa el registro final antes de enviar la respuesta HTTP estructurada.
+Formato de toda respuesta de error (se mantiene `detail` porque la app ya lo muestra):
+
+```json
+{"detail": "Se agotaron las raciones para este turno", "codigo": "sin_raciones", "request_id": "3f9a1c0b77e2"}
+```
+
+### 7.2 Un solo lugar registra: sin *log and throw*
+`shared/http_errores.py` es la frontera: las capas de abajo solo lanzan y ahí se registra **una vez**. Los errores de negocio y de infraestructura tienen `exception_handler` propios. Los inesperados los captura un middleware y no un `exception_handler(Exception)`, porque Starlette re-lanza la excepción después de ese handler y el servidor la volvería a imprimir (doble registro). Hay una prueba que verifica que un error inesperado deja exactamente una traza en el log y que la respuesta no filtra hosts, puertos, usuarios ni trazas.
+
+### 7.3 Excepciones absorbidas a propósito (best-effort)
+Hay excepciones que se capturan y **no** se propagan, porque la operación principal ya quedó confirmada en PostgreSQL. Cada una se registra:
+
+| Dónde | Por qué no se propaga | Nivel |
+|---|---|---|
+| `rabbitmq.publish` | El turno ya existe; perder el evento solo afecta push y seguimiento. | `WARNING` |
+| `ws_bus.publish_to_session` / `publish_broadcast` | El aviso en tiempo real es redundante: la app consulta `/queue/status`. | `WARNING` |
+| `push.send_push` | Sin push el turno sigue válido y la app lo ve por WebSocket. | `WARNING` |
+| Consumers M4/M5 | Un mensaje con error no debe reintentarse en bucle ni frenar a los demás. | `ERROR` con traza |
+| Ciclo del worker de inactividad | Un ciclo fallido no debe matar al worker; el siguiente reintenta. | `ERROR` con traza |
 
 ---
 
 ## 8. Concurrencia y Condiciones de Carrera
 
-La concurrencia en software (Sesión 6) expone al sistema a fallos no deterministas debido al *interleaving* arbitrario del planificador del sistema operativo sobre el estado mutable compartido.
-
-### 8.1 Demostración de la Condición de Carrera (Sobrecupo / Overbooking)
-Imaginemos el escenario crítico donde **queda exactamente 1 ración disponible** (`raciones_max = 500`, `raciones_usadas = 499`) y dos estudiantes envían su solicitud en el mismo milisegundo:
+### 8.1 La carrera de la última ración
+Con una sola ración disponible, dos estudiantes que piden turno en el mismo instante pueden leer ambos "queda 1" antes de que alguno inserte:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Alumno A
-    actor Alumno B
-    participant Router as API /join
+    actor A as Alumno A
+    actor B as Alumno B
+    participant API as POST /join
     participant DB as PostgreSQL
 
-    Note over Alumno A, Alumno B: Queda exactamente 1 ración (Capacidad = 500, Usadas = 499)
-    Alumno A->>Router: POST /join (Almuerzo)
-    Alumno B->>Router: POST /join (Almuerzo)
-    Router->>DB: Alumno A consulta restantes: 500 - 499 = 1 > 0 (VÁLIDO)
-    Router->>DB: Alumno B consulta restantes: 500 - 499 = 1 > 0 (VÁLIDO)
-    Note over Router, DB: ¡INTERLEAVING! Ambos leyeron antes de que alguno inserte
-    Router->>DB: Alumno A inserta Turno #500 (Commit OK)
-    Router->>DB: Alumno B inserta Turno #501 (Commit OK)
-    Note over DB: RESULTADO: 501 raciones asignadas -> ¡SOBREVENTA / OVERBOOKING!
+    Note over A,B: Queda 1 ración (500 de 500 usadas menos 1)
+    A->>API: pedir turno
+    B->>API: pedir turno
+    API->>DB: A cuenta activos: 499 < 500
+    API->>DB: B cuenta activos: 499 < 500
+    API->>DB: A inserta (commit)
+    API->>DB: B inserta (commit)
+    Note over DB: 501 turnos para 500 raciones
 ```
 
-### 8.2 Solución Arquitectónica: Bloqueo Mutex `SELECT ... FOR UPDATE`
-Para garantizar consistencia serializable, la lectura de vacantes y la inserción del nuevo turno deben consolidarse en **una sola sección crítica atómica**. En `backend/src/modules/queues/service.py`:
+**Esta carrera existía en el código** hasta esta versión: el conteo de raciones estaba en el router, fuera de la sección crítica de `crear_turno`. `test_reproduce_sobreventa_si_el_chequeo_queda_fuera_del_candado` la reproduce contra PostgreSQL real: cinco hilos, una ración, cinco turnos asignados.
+
+### 8.2 Solución: el conteo dentro de la sección crítica
+`crear_turno` toma un candado sobre la fila del turno del día y, **bajo ese candado**, cuenta los activos, decide e inserta:
+
 ```python
-def crear_turno(estudiante_id: int, turno_dia_id: int, conn=None) -> int:
-    _conn = conn or get_db_conn()
-    try:
-        with _conn.cursor() as cur:
-            # 1. Cerrojo exclusivo a nivel de fila sobre el turno del día
-            cur.execute("SELECT id FROM turno_dia WHERE id = %s FOR UPDATE", (turno_dia_id,))
-            if cur.fetchone() is None:
-                raise ValueError(f"turno_dia_id {turno_dia_id} no existe")
-
-            # 2. Conteo de turnos bajo el bloqueo
-            cur.execute(
-                """
-                SELECT COUNT(*) + 1 FROM turnos
-                WHERE turno_dia_id = %s AND estado NOT IN ('CANCELADO', 'ATENDIDO')
-                """,
-                (turno_dia_id,),
-            )
-            numero_generado = cur.fetchone()[0]
-
-            # 3. Inserción atómica y confirmación
-            cur.execute(
-                """
-                INSERT INTO turnos (estudiante_id, turno_dia_id, numero_turno)
-                VALUES (%s, %s, %s) RETURNING numero_turno
-                """,
-                (estudiante_id, turno_dia_id, numero_generado),
-            )
-            numero = cur.fetchone()[0]
-        _conn.commit()
-        return numero
-    finally:
-        if conn is None:
-            _conn.close()
+cur.execute("SELECT id FROM turno_dia WHERE id = %s FOR UPDATE", (turno_dia_id,))
+cur.execute("""SELECT COUNT(*) FILTER (WHERE estado != 'CANCELADO'), COALESCE(MAX(numero_turno), 0)
+               FROM turnos WHERE turno_dia_id = %s""", (turno_dia_id,))
+activos, ultimo_numero = cur.fetchone()
+if activos >= raciones_max:
+    _conn.rollback()
+    raise SinRaciones()
+cur.execute("INSERT INTO turnos (...) VALUES (%s, %s, %s) RETURNING numero_turno",
+            (estudiante_id, turno_dia_id, ultimo_numero + 1))   # UniqueViolation -> TurnoDuplicado
 ```
-El bloqueo `FOR UPDATE` serializa el acceso: la segunda transacción se suspende hasta que la primera finalice su commit, garantizando que el segundo hilo lea el aforo actualizado y sea rechazado elegantemente.
+
+El router mantiene los chequeos rápidos sin candado (turno existente, raciones agotadas) para responder sin esperar en los casos obvios; la regla que manda es la de dentro del candado. El número usa `MAX + 1` y no `COUNT + 1`: así nunca se recicla un número ya entregado aunque se cancelen turnos.
+
+### 8.3 Concurrencia entre hilos y procesos
+- **Pool de conexiones:** inicialización con *double-checked locking* (sin ella, dos hilos al arrancar creaban dos pools distintos y perdían conexiones) y semáforo para esperar conexión (sección 5.3).
+- **Event loop:** la base de datos corre en el threadpool (sección 5.5).
+- **Varios procesos (6 workers):** cada worker tiene sus propias conexiones WebSocket en memoria. Los avisos pasan por Redis Pub/Sub (`shared/ws_bus.py`) para llegar al estudiante esté en el worker que esté. Las tareas periódicas usan un lock de líder en Redis (`SET NX EX`, `shared/leader_lock.py`), para que el worker de inactividad corra una sola vez por ciclo y no seis.
+
+### 8.4 Evidencia bajo carga real (Locust)
+Prueba de "hora punta" (`backend/tests/carga/`): cada usuario de Locust es un estudiante distinto con sesión real en Redis. Todos piden turno casi a la vez (200 por segundo) y luego consultan su estado y el menú. Backend con 6 workers, infraestructura aislada, misma laptop (20 núcleos, 16 GB). Al terminar cada corrida se revisa la base.
+
+| Corrida | Estudiantes | Peticiones/s | Errores | Pedir turno p50 / p95 | Consultar estado p95 |
+|---|:---:|:---:|---|:---:|:---:|
+| Código anterior (pool sin corregir)\* | 1000 | 190 | 11,7 % (errores 500) | 0,74 s / 3,9 s | 2,8 s |
+| Pool corregido | 1000 | 305 | 0 % | 0,83 s / 1,4 s | 64 ms |
+| **Versión v1.0** | 1000 | **306** | **1 conexión reseteada por Windows** | **0,70 s / 1,2 s** | **61 ms** |
+| Pool corregido, estrés | 2000 | 590 | 0,7 % (conexiones abortadas) | 0,73 s / 1,9 s | 3,2 s |
+| **Versión v1.0, estrés** | 2000 | **729** | **0,01 % (5 conexiones abortadas, ningún 500)** | **0,23 s / 0,68 s** | **0,41 s** |
+
+\* Medida contra `localhost`, que suma la penalización de IPv6 a cada conexión nueva (sección 5.6); las demás corridas usan `127.0.0.1`.
+
+La diferencia entre "pool corregido" y "v1.0" se nota sobre todo en el estrés: sacar la base de datos del event loop (sección 5.5) bajó el p95 de pedir turno de 1,9 s a 0,68 s y el de consultar estado de 3,2 s a 0,41 s, con un 24 % más de peticiones por segundo. Con 2000 usuarios, Locust y el backend compiten por la misma CPU, así que ese es el límite medido en esta laptop y no el del sistema.
+
+En **todas** las corridas la base quedó consistente: ningún número de turno repetido, ningún estudiante con dos turnos, numeración sin huecos y nunca más turnos que raciones.
 
 ---
 
 ## 9. Tolerancia a Fallas y Resiliencia
 
-El sistema aplica cuatro mecanismos de resiliencia del dominio:
-
-1. **Desacoplamiento Espacial y Temporal con RabbitMQ:**  
-   La reserva del turno en base de datos no espera a que el servicio externo de notificaciones push responda. La API despacha el evento al Topic Exchange `comedor` de RabbitMQ de forma durable (`delivery_mode = PERSISTENT`), aislando la latencia de red de los dispositivos móviles.
-2. **Idempotencia en Consumidores (M5 Seguimiento):**  
-   Ante una desconexión de red que provoque la reentrega de un mensaje AMQP (`at-least-once delivery`), la tabla `historial_asistencia` previene la duplicación mediante su restricción `UNIQUE (estudiante_id, turno_dia_id)`. El consumidor procesa el duplicado reconociendo el ACK sin alterar las métricas reales.
-3. **Degradación Elegante ante Caída de Proveedor Externo:**  
-   Si el servidor de Expo Push Notification (`exp.host`) se encuentra fuera de línea, la asignación del ticket en el Comedor UNI **continúa siendo 100% exitosa**. El estudiante no queda desamparado; su turno se persiste y el seguimiento se mantiene mediante WebSocket o consulta activa en la app.
-4. **Aislamiento de Fallos en Tareas en Segundo Plano:**  
-   En `inactivity_worker`, el procesamiento de turnos inactivos está encapsulado por bloques `try-except` independientes en cada iteración. La corrupción de datos en la notificación de un estudiante no detiene el ciclo de vida del worker ni bloquea el llamado de los siguientes comensales.
+| Falla | Comportamiento del sistema | Cómo se verificó |
+|---|---|---|
+| RabbitMQ no disponible al arrancar | Los consumers reintentan 30 veces cada 3 s; si se rinden, queda un `ERROR` en el log. | `test_consumers_reintentan_hasta_que_rabbitmq_responde`, `test_consumers_se_rinden_y_lo_registran_como_error` |
+| RabbitMQ caído o colgado durante la operación | `publish` reutiliza una conexión robusta, tiene un tiempo máximo de 3 s y es best-effort: el turno se asigna igual. | `test_publish_no_propaga_la_caida_de_rabbitmq`, `test_publish_no_cuelga_el_request_si_rabbitmq_no_responde` |
+| Redis caído durante un aviso en tiempo real | El aviso se registra como `WARNING` y la operación responde 200. | `test_confirmar_responde_aunque_rabbitmq_y_redis_esten_caidos` |
+| PostgreSQL o Redis caídos durante un request | 503 controlado, sin filtrar detalles internos. | `test_postgres_caido_responde_503_sin_filtrar_detalles`, `test_redis_caido_responde_503` |
+| Pool de conexiones saturado | El request espera hasta 10 s una conexión libre; recién entonces responde 503. | `test_pool_lleno_hace_esperar_y_falla_solo_tras_el_timeout` y Locust (sección 8.4) |
+| Reentrega de un mensaje (*at-least-once*) | M5 inserta con `ON CONFLICT DO NOTHING`: el historial no se duplica. | `test_m5_es_idempotente_ante_reentrega` |
+| Expo Push caído | Se registra `WARNING`; el turno sigue válido y la app lo ve por WebSocket. | Revisión de `shared/push.py` |
+| Falla un ciclo del worker de inactividad | Se registra el error y el siguiente ciclo corre normalmente. | `test_worker_de_inactividad_sobrevive_a_un_ciclo_fallido` |
+| Muere el worker que tenía el lock de líder | El lock expira (TTL de 55 s) y otro worker toma el ciclo siguiente. | Diseño de `shared/leader_lock.py` |
 
 ---
 
 ## 10. Pruebas Automatizadas y Evidencias
 
-El repositorio incorpora una **suite integral de 21 pruebas automatizadas** en `backend/tests/` ejecutables de forma estándar e independiente sin requerir bases de datos levantadas:
+### 10.1 Cómo se ejecutan
+Desde la raíz del repositorio:
 
 ```powershell
-python -m unittest discover backend/tests
+# Unitarias (sin infraestructura)
+python -m pytest backend/tests
+
+# Para incluir las de integración contra PostgreSQL real, levantar antes la base aislada
+docker compose -f backend/tests/carga/docker-compose.carga.yml up -d postgres
+python -m pytest backend/tests
 ```
 
-### 10.1 Resumen de Ejecución de Pruebas Automatizadas
+Sin la base de pruebas, las 7 pruebas de integración se saltan y muestran el comando para levantarla. Ninguna prueba usa la base de desarrollo: cada una crea su propio turno y sus estudiantes, y los borra al terminar.
+
+### 10.2 Resultado
 
 ```text
-.....................
-----------------------------------------------------------------------
-Ran 21 tests in 0.239s
-
-OK
+69 passed in 2.02s          (con PostgreSQL de pruebas levantado)
+62 passed, 7 skipped        (sin infraestructura)
 ```
 
-### 10.2 Desglose de Pruebas por Criterio de la Rúbrica Oficial
+### 10.3 Pruebas por criterio de la rúbrica
+Todas las pruebas ejercitan el código real del sistema (endpoints con `TestClient`, servicios y base de datos), no copias de su lógica.
 
-| Archivo de Prueba | Caso de Prueba Automatizado | Criterio de Rúbrica Verificado | Resultado |
-|---|---|---|:---:|
-| `test_contracts.py` | `test_precondition_unirse_cola_sesion_valida` | Design by Contract (Precondición de sesión) | **PASS** |
-| `test_contracts.py` | `test_precondition_capacidad_disponible` | Design by Contract (Precondición de aforo) | **PASS** |
-| `test_contracts.py` | `test_postcondition_turno_generado_monotonico_y_positivo` | Design by Contract (Postcondición monotónica) | **PASS** |
-| `test_contracts.py` | `test_invariante_transicion_estados_turno` | Design by Contract (Invariante de estados) | **PASS** |
-| `test_contracts.py` | `test_invariante_batch_size_reasignacion` | Design by Contract (Invariante de 10 grupos) | **PASS** |
-| `test_defensive.py` | `test_barricade_rejects_malformed_shift_type` | Programación Defensiva (Barricada de tipo) | **PASS** |
-| `test_defensive.py` | `test_barricade_rejects_empty_or_oversized_sid` | Programación Defensiva (Barricada de longitud) | **PASS** |
-| `test_defensive.py` | `test_student_code_sanitization_and_validation` | Programación Defensiva (Sanitización código UNI) | **PASS** |
-| `test_defensive.py` | `test_untrusted_html_scraping_defensive_fallbacks` | Programación Defensiva (Manejo datos scraping) | **PASS** |
-| `test_defensive.py` | `test_defensive_parameterized_sql_simulation` | Programación Defensiva (Protección SQL Injection) | **PASS** |
-| `test_errors_and_exceptions.py` | `test_domain_error_conditions_mapping` | Errores y Excepciones (Mapeo códigos 4xx) | **PASS** |
-| `test_errors_and_exceptions.py` | `test_runtime_technical_exceptions_handling` | Errores y Excepciones (Mapeo 503 sin fuga) | **PASS** |
-| `test_errors_and_exceptions.py` | `test_prevention_of_log_and_throw_antipattern` | Errores y Excepciones (Anti-Log and Throw) | **PASS** |
-| `test_errors_and_exceptions.py` | `test_structured_error_payload_integrity` | Errores y Excepciones (Estructura de error) | **PASS** |
-| `test_concurrency.py` | `test_reproduce_race_condition_unsynchronized_overbooking` | Concurrencia (Reproducción de overbooking) | **PASS** |
-| `test_concurrency.py` | `test_synchronized_atomic_check_and_reserve_prevents_overbooking` | Concurrencia (Solución atómica con Mutex) | **PASS** |
-| `test_concurrency.py` | `test_unique_active_ticket_per_student_under_concurrency` | Concurrencia (Unicidad bajo concurrencia) | **PASS** |
-| `test_resilience.py` | `test_broker_reconnect_retry_loop_success_after_transient_failure` | Tolerancia a Fallas (Reintentos RabbitMQ) | **PASS** |
-| `test_resilience.py` | `test_consumer_idempotency_prevents_duplicate_attendance` | Tolerancia a Fallas (Idempotencia M5) | **PASS** |
-| `test_resilience.py` | `test_graceful_degradation_push_notification_outage` | Tolerancia a Fallas (Degradación elegante push) | **PASS** |
-| `test_resilience.py` | `test_worker_iteration_fault_isolation` | Tolerancia a Fallas (Aislamiento de tareas) | **PASS** |
+| Archivo | Pruebas | Criterio | Qué verifica |
+|---|:---:|---|---|
+| `test_contracts.py` | 15 | Design by Contract | `requiere`/`asegura`; precondiciones de `crear_turno` sin tocar la base; números consecutivos; invariante de aforo; ración liberada al cancelar; grupo asignado entre 1 y 10; contratos de `/confirm`. |
+| `test_defensive.py` | 23 | Programación defensiva | Rechazo (422) de `tipo` y `sid` inválidos, inyección SQL, foto vacía o gigante, `push_token` largo y HTML del portal sin código UNI válido, sin que el dato llegue al servicio; SQL siempre parametrizado. |
+| `test_errors_and_exceptions.py` | 14 | Errores y excepciones | Cada error de negocio con su 4xx y `codigo`; 503 sin filtrar detalles ante PostgreSQL, pool o Redis caídos; 500 genérico registrado una sola vez; `request_id` en la respuesta y en el log. |
+| `test_concurrency.py` | 5 | Concurrencia | Reproducción de la sobreventa; 40 hilos por 10 raciones dan exactamente 10 turnos (1 a 10); un estudiante en paralelo obtiene un solo turno; el pool espera en vez de fallar. |
+| `test_resilience.py` | 7 | Tolerancia a fallas | Reintentos de consumers; RabbitMQ caído o colgado; Redis caído en un aviso; idempotencia de M5; worker que sobrevive a un ciclo fallido. |
+| `test_asignar_turno.py`, `test_caracterizacion_queues.py` | 5 | Pruebas y evidencias | Caso de uso `AsignarTurno` con repositorio en memoria y caracterización de `calcular_turno_asignado`. |
 
-### 10.3 Validaciones de Sintaxis, Tipos y Linting
-1. **Backend:** `python -m compileall -q backend/src backend/run.py` $\rightarrow$ **0 errores**.
-2. **Frontend Tipos:** `npx tsc --noEmit` $\rightarrow$ **0 errores de tipado TypeScript**.
-3. **Frontend Lint:** `npm run lint` $\rightarrow$ **0 errores** (13 advertencias preexistentes de dependencias de hooks).
+**Prueba de carga:** `backend/tests/carga/` (Locust, con instrucciones en su `README.md`). Resultados en la sección 8.4.
+
+### 10.4 Otras verificaciones
+1. **Backend:** `python -m compileall -q backend/src backend/run.py` → 0 errores.
+2. **Dependencias:** `pip-audit -r backend/requirements.txt` → sin vulnerabilidades conocidas tras subir Pillow (sección 4.3).
+3. **Frontend:** `npx tsc --noEmit` y `npm run lint` (registro del equipo en el avance parcial).
 
 ---
 
 ## 11. Limitaciones y Trabajo Futuro (Ruta hacia el Examen Final v2.0)
 
-Para la **Etapa II (Examen Final - versión v2.0)**, el sistema evolucionará sobre la base de esta línea base aprobada:
-
-1. **Construcción Table-Driven y Máquina de Estados:** Formalizar el ciclo de vida del turno (`ESPERANDO` $\rightarrow$ `LLAMADO` $\rightarrow$ `ATENDIDO`/`CANCELADO`) mediante una tabla de transiciones declarativa.
-2. **Configuración Externalizada y Feature Flags:** Externalización completa de parámetros operativos (duración del ping, timeout de inactividad, tamaño de lote de reasignación) con control dinámico mediante feature flags.
-3. **Observabilidad y Structured Logging:** Sustituir las sentencias `print()` informativas por un logger estructurado en formato JSON con inyección de `correlation_id` (MDC) para trazabilidad distribuida de peticiones.
-4. **Contenerización y Despliegue Completo:** Unificar el backend en un `Dockerfile` optimizado multicapa y orquestar el entorno completo en `docker-compose.yml`.
-5. **Profiling y Rendimiento:** Medición de latencias base bajo carga con herramientas como k6 o Locust, identificando cuellos de botella en la inferencia biométrica y las consultas transaccionales.
+1. **Biometría fuera del proceso de la API:** deepface y TensorFlow se cargan en cada worker. Moverlos a un servicio o proceso propio bajaría la memoria y el arranque, y permitiría escalar la API sin multiplicar el modelo.
+2. **Unificar la rodaja hexagonal con el flujo real:** el caso de uso `AsignarTurno` (`queues/domain`) existe y está probado, pero `/join` usa `service.crear_turno`. Pasar la regla de aforo y los contratos a `AsignarTurno` dejaría un solo camino.
+3. **Observabilidad entre servicios:** los logs ya llevan `request_id`; falta propagarlo en los eventos de RabbitMQ para seguir un turno de punta a punta, y emitir los logs en JSON.
+4. **Carga medida desde otra máquina:** Locust corrió en la misma laptop que el backend; el techo real del sistema es mayor que el medido.
+5. **Máquina de estados declarativa** para el ciclo de vida del turno (`ESPERANDO` → `LLAMADO` → `ATENDIDO`/`CANCELADO`) y **configuración externalizada** de tiempos (ping, inactividad, tamaño de grupo).
 
 ---
 

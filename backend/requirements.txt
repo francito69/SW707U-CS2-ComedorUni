@@ -1,13 +1,23 @@
-fastapi[websockets]
-python-dotenv
-httpx
-aio-pika
-uvicorn[standard]
-beautifulsoup4
-requests
-redis
-deepface
-opencv-python<5
-psycopg2-binary
-Pillow
-tf-keras
+# Versiones exactas: las mismas con las que pasan las pruebas y la prueba de carga
+# (Python 3.12). Para actualizar una, cambiarla aquí y volver a correr ambas.
+
+# API HTTP/WebSocket
+fastapi==0.141.1
+uvicorn[standard]==0.53.0  # incluye la librería websockets que usa FastAPI
+python-dotenv==1.2.3
+
+# Infraestructura
+psycopg2-binary==2.9.13
+redis==8.1.0
+aio-pika==10.0.1
+httpx==0.28.1             # cliente HTTP de las push (shared/push.py) y de TestClient
+
+# Scraping del Portal Alumnos
+beautifulsoup4==4.15.0
+
+# Verificación biométrica
+deepface==0.0.101
+tf-keras==2.21.0          # deepface lo exige con TensorFlow >= 2.16
+opencv-python==4.10.0.84  # la 5.x ya no trae los Haar cascades que usa el detector de deepface
+pillow==13.0.0            # 12.3.0 tenía 35 CVE según pip-audit (22-oct-2026)
+numpy==2.5.3

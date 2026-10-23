@@ -1,162 +1,127 @@
 """
-Pruebas de Concurrencia y Condiciones de Carrera — ComedorUNI
-Reproduce y verifica escenarios de colisión en tiempo de ejecución:
-1. Carrera de aforo crítico (N hilos compitiendo por la última ración disponible).
-2. Demostración de sobreventa (overbooking) sin sincronización vs asignación atómica con mutex.
-3. Unicidad de turno por estudiante ante peticiones paralelas simultáneas.
-Rúbrica SW707: Criterio 'Concurrencia' (15%)
+Concurrencia (rúbrica: 15 %), contra PostgreSQL real.
+
+1. Reproduce la sobreventa que aparece si el chequeo de raciones queda fuera de
+   la sección crítica (lo que hacía /join antes de esta versión).
+2. Verifica que crear_turno, con el chequeo bajo SELECT ... FOR UPDATE, nunca
+   sobrevende ni repite números aunque muchos hilos pidan turno a la vez.
+3. Verifica que un mismo estudiante no obtiene dos turnos con peticiones simultáneas.
+4. Verifica que el pool de conexiones hace esperar en vez de fallar cuando se llena.
 """
+import os
 import threading
-import time
-import unittest
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+
+import psycopg2
+import psycopg2.pool
+import pytest
+
+from backend.src.modules.queues.service import crear_turno
+from backend.src.shared import db
+from backend.src.shared.errores import TurnoDuplicado
+
+PG_PARAMS = dict(host=os.environ["DB_HOST"], port=int(os.environ["DB_PORT"]),
+                 dbname="comedor_uni", user="postgres", password="postgres")
 
 
-class TestConcurrencyScenarios(unittest.TestCase):
-    """
-    Verificación del comportamiento bajo concurrencia (Sesión 6):
-    - Detección de fallos de interleaving en memoria compartida.
-    - Demostración reproducible de la condición de carrera en aforo.
-    - Validación de soluciones transaccionales mediante sección crítica atómica.
-    """
+def _en_paralelo(funciones):
+    """Lanza todas las funciones a la vez (barrera) y devuelve sus resultados o excepciones."""
+    barrera = threading.Barrier(len(funciones))
 
-    def test_reproduce_race_condition_unsynchronized_overbooking(self):
-        """
-        DEMOSTRACIÓN DE LA FALLA: Sin sincronización atómica entre lectura y escritura.
-        Escenario: Queda exactamente 1 ración (capacidad = 10, usadas = 9).
-        5 estudiantes solicitan turno en el mismo milisegundo.
-        Resultado esperado del fallo: Múltiples hilos leen 'restantes = 1' y ambos se encolan,
-        provocando SOBREVENTA (overbooking) y superando el aforo de 10.
-        """
-        capacidad_max = 10
-        raciones_usadas = 9
-        turnos_asignados = []
+    def correr(f):
+        barrera.wait()
+        try:
+            return f()
+        except Exception as e:  # se devuelve para poder contarlas
+            return e
 
-        def unsynchronized_join_queue(estudiante_id: int):
-            nonlocal raciones_usadas
-            # 1. Lectura fuera de sección crítica (Interleaving vulnerable)
-            restantes = capacidad_max - raciones_usadas
-            time.sleep(0.005)  # Simula latencia de red/I/O donde ocurre el cambio de contexto
-
-            # 2. Decisión basada en estado rancio (stale state)
-            if restantes > 0:
-                # 3. Escritura no atómica
-                raciones_usadas += 1
-                turnos_asignados.append(estudiante_id)
-
-        threads = []
-        barrier = threading.Barrier(5)
-
-        def worker(eid):
-            barrier.wait()  # Sincroniza arranque exacto de los 5 hilos
-            unsynchronized_join_queue(eid)
-
-        for i in range(1, 6):
-            t = threading.Thread(target=worker, args=(i,))
-            threads.append(t)
-            t.start()
-
-        for t in threads:
-            t.join()
-
-        # Evidencia de la condición de carrera:
-        # Debido al interleaving, más de 1 hilo logró ingresar a pesar de haber solo 1 vacante
-        self.assertGreater(
-            len(turnos_asignados), 1,
-            "La condición de carrera debió provocar que más de 1 estudiante obtuviera turno"
-        )
-        self.assertGreater(
-            raciones_usadas, capacidad_max,
-            "Se evidenció overbooking: raciones asignadas superaron la capacidad máxima"
-        )
-
-    def test_synchronized_atomic_check_and_reserve_prevents_overbooking(self):
-        """
-        DEMOSTRACIÓN DE LA SOLUCIÓN: Sección crítica atómica (emulando SELECT ... FOR UPDATE).
-        Escenario: Queda exactamente 1 ración (capacidad = 10, usadas = 9).
-        10 hilos concurrentes compiten simultáneamente.
-        Resultado requerido:
-        - Exactamente 1 hilo obtiene el turno con éxito.
-        - Los 9 hilos restantes son rechazados por aforo agotado.
-        - El aforo final no supera jamás la capacidad máxima (invariante preservada).
-        """
-        capacidad_max = 10
-        raciones_usadas = 9
-        db_mutex = threading.Lock()  # Representa el bloqueo FOR UPDATE en PostgreSQL
-
-        exitos = []
-        rechazos = []
-
-        def synchronized_join_queue(estudiante_id: int):
-            nonlocal raciones_usadas
-            # Sección crítica atómica: lectura y reserva bajo el mismo cerrojo
-            with db_mutex:
-                restantes = capacidad_max - raciones_usadas
-                if restantes <= 0:
-                    rechazos.append(estudiante_id)
-                    return False
-                # Reserva atómica dentro de la sección protegida
-                raciones_usadas += 1
-                exitos.append(estudiante_id)
-                return True
-
-        threads = []
-        barrier = threading.Barrier(10)
-
-        def worker(eid):
-            barrier.wait()  # Lanzamiento simultáneo
-            synchronized_join_queue(eid)
-
-        for i in range(1, 11):
-            t = threading.Thread(target=worker, args=(i,))
-            threads.append(t)
-            t.start()
-
-        for t in threads:
-            t.join()
-
-        # Verificación estricta de invariantes de negocio
-        self.assertEqual(len(exitos), 1, "Solo exactamente 1 solicitud debió ser admitida")
-        self.assertEqual(len(rechazos), 9, "Las 9 solicitudes restantes debieron ser rechazadas")
-        self.assertEqual(raciones_usadas, capacidad_max, "El total final debe ser exactamente el límite")
-
-    def test_unique_active_ticket_per_student_under_concurrency(self):
-        """
-        Verificación de Invariante de Unicidad de Estudiante:
-        Un mismo estudiante envía 5 peticiones simultáneas para el mismo turno diario.
-        El sistema debe admitir como máximo 1 sola reserva y rechazar los 4 duplicados restantes.
-        """
-        student_tickets = {}
-        ticket_lock = threading.Lock()
-        admitidos = []
-        rechazados_duplicado = []
-
-        def request_ticket_for_student(estudiante_id: int, request_id: int):
-            with ticket_lock:
-                if estudiante_id in student_tickets:
-                    rechazados_duplicado.append(request_id)
-                    return
-                # Asigna turno y registra unicidad
-                student_tickets[estudiante_id] = request_id
-                admitidos.append(request_id)
-
-        threads = []
-        barrier = threading.Barrier(5)
-
-        def worker(req_id):
-            barrier.wait()
-            request_ticket_for_student(estudiante_id=1001, request_id=req_id)
-
-        for req in range(5):
-            t = threading.Thread(target=worker, args=(req,))
-            threads.append(t)
-            t.start()
-
-        for t in threads:
-            t.join()
-
-        self.assertEqual(len(admitidos), 1, "Solo una solicitud del mismo estudiante debe prosperar")
-        self.assertEqual(len(rechazados_duplicado), 4, "Las otras 4 deben rechazarse como duplicadas")
+    with ThreadPoolExecutor(max_workers=len(funciones)) as ex:
+        return list(ex.map(correr, funciones))
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_reproduce_sobreventa_si_el_chequeo_queda_fuera_del_candado(pg, turno_dia_prueba, estudiantes):
+    raciones_max, hilos = 1, 5
+    ids = estudiantes(hilos)
+    leyeron = threading.Barrier(hilos)
+
+    def reservar_sin_candado(estudiante_id, numero):
+        conn = psycopg2.connect(**PG_PARAMS)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM turnos WHERE turno_dia_id = %s AND estado != 'CANCELADO'",
+                            (turno_dia_prueba,))
+                quedan = raciones_max - cur.fetchone()[0]
+                leyeron.wait()  # fuerza el intercalado: todos leen antes de que alguien inserte
+                if quedan > 0:
+                    cur.execute("INSERT INTO turnos (estudiante_id, turno_dia_id, numero_turno) VALUES (%s, %s, %s)",
+                                (estudiante_id, turno_dia_prueba, numero))
+        finally:
+            conn.close()
+
+    _en_paralelo([lambda i=i, n=n: reservar_sin_candado(i, n) for n, i in enumerate(ids, 1)])
+
+    with pg.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM turnos WHERE turno_dia_id = %s", (turno_dia_prueba,))
+        asignados = cur.fetchone()[0]
+    assert asignados == hilos > raciones_max  # 5 turnos para 1 ración: la carrera es real
+
+
+def test_crear_turno_no_sobrevende_con_40_hilos_por_10_raciones(pg, turno_dia_prueba, estudiantes):
+    ids = estudiantes(40)
+
+    resultados = _en_paralelo([lambda i=i: crear_turno(i, turno_dia_prueba, raciones_max=10) for i in ids])
+
+    tipos = Counter(type(r).__name__ for r in resultados)
+    assert tipos == {"TurnoCreado": 10, "SinRaciones": 30}
+    numeros = sorted(r.numero for r in resultados if not isinstance(r, Exception))
+    assert numeros == list(range(1, 11))  # sin duplicados ni huecos
+    with pg.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM turnos WHERE turno_dia_id = %s", (turno_dia_prueba,))
+        assert cur.fetchone()[0] == 10
+
+
+def test_mismo_estudiante_en_paralelo_obtiene_un_solo_turno(turno_dia_prueba, estudiantes):
+    (unico,) = estudiantes(1)
+
+    resultados = _en_paralelo([lambda: crear_turno(unico, turno_dia_prueba, raciones_max=100)] * 10)
+
+    assert sum(not isinstance(r, Exception) for r in resultados) == 1
+    assert all(isinstance(r, TurnoDuplicado) for r in resultados if isinstance(r, Exception))
+
+
+class _PoolFalso:
+    def getconn(self):
+        return type("Conn", (), {"closed": False})()
+
+    def putconn(self, conn, close=False):
+        pass
+
+
+def test_pool_lleno_hace_esperar_y_falla_solo_tras_el_timeout(monkeypatch):
+    monkeypatch.setattr(db, "_pool", _PoolFalso())
+    monkeypatch.setattr(db, "_slots", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(db, "_SLOT_TIMEOUT", 0.2)
+
+    ocupada = db.get_db_conn()
+    with pytest.raises(psycopg2.pool.PoolError, match="sin conexión libre"):
+        db.get_db_conn()
+
+    # Si la conexión se libera mientras otro espera, ese otro la recibe.
+    liberador = threading.Timer(0.05, ocupada.close)
+    liberador.start()
+    monkeypatch.setattr(db, "_SLOT_TIMEOUT", 2)
+    segunda = db.get_db_conn()
+    segunda.close()
+    liberador.join()
+
+
+def test_cerrar_dos_veces_no_libera_dos_cupos(monkeypatch):
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(db, "_pool", _PoolFalso())
+    monkeypatch.setattr(db, "_slots", slots)
+
+    conn = db.get_db_conn()
+    conn.close()
+    conn.close()  # BoundedSemaphore lanzaría ValueError si se liberara de más
+    assert slots.acquire(blocking=False)

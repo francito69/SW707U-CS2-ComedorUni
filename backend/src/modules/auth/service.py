@@ -1,16 +1,23 @@
+import logging
 import re
 
 from bs4 import BeautifulSoup
 
+from ...shared.errores import DatosPortalInvalidos
+from ...shared.validacion import CODIGO_UNI_PATTERN
+
 BASE_URL = "https://alumnos.uni.edu.pe"
+log = logging.getLogger(__name__)
 
 
 def parse_student_data(home_html: str, cursos_html: str, datos_html: str = "") -> dict:
-    print(
-        f"[*] /parse-data — home_html: {len(home_html)} chars, "
-        f"cursos_html: {len(cursos_html)} chars, "
-        f"datos_html: {len(datos_html)} chars"
-    )
+    """
+    Extrae los datos del estudiante del HTML del Portal Alumnos (dato no confiable).
+    Los campos cosméticos (nombre, créditos) tienen valor por defecto; el código de
+    alumno no: sin un código UNI válido no hay identidad y se rechaza el login.
+    """
+    log.info("/parse-data: home=%d, cursos=%d, datos=%d caracteres",
+             len(home_html), len(cursos_html), len(datos_html))
 
     # Nombre desde home
     soup_home = BeautifulSoup(home_html, "html.parser")
@@ -27,17 +34,22 @@ def parse_student_data(home_html: str, cursos_html: str, datos_html: str = "") -
     soup_datos = BeautifulSoup(datos_html, "html.parser")
     codigo_input = soup_datos.find("input", {"id": "txt-codigo"})
     email_input = soup_datos.find("input", {"id": "txt-mail-uni"})
-    codigo = codigo_input.get("value", "No encontrado") if codigo_input else "No encontrado"
+    codigo = (codigo_input.get("value") or "").strip().upper() if codigo_input else ""
+    if not re.fullmatch(CODIGO_UNI_PATTERN, codigo):
+        # Antes se guardaba "No encontrado" como código: todos los logins con HTML
+        # roto terminaban compartiendo la misma identidad y la misma sesión.
+        raise DatosPortalInvalidos(
+            "No se pudo leer tu código de alumno desde el Portal UNI. Vuelve a iniciar sesión."
+        )
     email = email_input.get("value", "No encontrado") if email_input else "No encontrado"
 
     foto_base64 = _extract_profile_photo(soup_datos)
 
-    print(f"[*] Nombre: {nombre} | Código: {codigo} | Email: {email} | Foto: {'sí' if foto_base64 else 'no'}")
+    log.info("Datos del portal leídos: código %s, foto %s", codigo, "sí" if foto_base64 else "no")
 
     # Créditos desde cursos: suma de la tabla, solo cursos con Condición "Normal"
     soup_cursos = BeautifulSoup(cursos_html, "html.parser")
     creditos = _sum_creditos_normales(soup_cursos)
-    print(f"[*] Créditos (condición Normal): {creditos}")
 
     return {
         "nombre": nombre,
@@ -87,7 +99,7 @@ def _sum_creditos_normales(soup: BeautifulSoup) -> int:
                 pass
         return total  # tabla de cursos encontrada y procesada
 
-    print("[!] No se encontró la tabla de cursos para sumar créditos")
+    log.warning("No se encontró la tabla de cursos para sumar créditos")
     return total
 
 

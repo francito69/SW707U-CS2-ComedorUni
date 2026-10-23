@@ -1,9 +1,12 @@
 import base64
 import io
+import logging
 
 import numpy as np
 from PIL import Image
 from deepface import DeepFace
+
+log = logging.getLogger(__name__)
 
 
 def _b64_to_array(b64: str) -> np.ndarray:
@@ -28,7 +31,6 @@ def compare_faces(ref_b64: str, probe_b64: str) -> tuple[bool, float]:
     verified  = result["verified"]
     distance  = round(result["distance"], 4)
     threshold = result.get("threshold", 0.8)
-    diff      = round(distance - threshold, 4)
-    estado    = f"SUPERÓ por {diff}" if diff > 0 else f"por debajo por {abs(diff)}"
-    print(f"[*] Biométrico — verified: {verified} | distance: {distance} | threshold: {threshold} | {estado}")
+    log.info("Biométrico: verified=%s distance=%s threshold=%s margen=%s",
+             verified, distance, threshold, round(threshold - distance, 4))
     return verified, distance

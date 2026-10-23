@@ -2,10 +2,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from .shared.logs import configurar_logging
+
+configurar_logging()
 
 from .modules.auth.router import router as auth_router
 from .modules.menu.router import router as menu_router
@@ -16,10 +21,13 @@ from .modules.queues.manager import active_service_manager, manager as queue_man
 from .modules.queues.service import ensure_turno_dia_hoy
 from .modules.notifications.consumer import start as start_m4
 from .modules.tracking.consumer import start as start_m5
+from .shared.http_errores import registrar_manejo_de_errores
 from .shared.ws_bus import start_ws_bus_listener
 
+log = logging.getLogger(__name__)
 
-async def _start_consumers_with_retry(max_attempts: int = 30, delay: int = 3):
+
+async def _start_consumers_with_retry(max_attempts: int = 30, delay: int = 3) -> bool:
     """
     Arranca los consumers M4/M5 reintentando hasta que RabbitMQ esté disponible.
     Evita que un fallo de arranque (backend inicia antes que RabbitMQ) deje los
@@ -29,12 +37,15 @@ async def _start_consumers_with_retry(max_attempts: int = 30, delay: int = 3):
         try:
             await start_m4()
             await start_m5()
-            print("[App] Consumers RabbitMQ iniciados")
-            return
+            log.info("Consumers RabbitMQ iniciados (intento %d)", attempt)
+            return True
         except Exception as e:
-            print(f"[App] Intento {attempt}/{max_attempts}: RabbitMQ no disponible ({e}); reintento en {delay}s")
+            log.warning("Intento %d/%d: RabbitMQ no disponible (%s); reintento en %ss",
+                        attempt, max_attempts, e, delay)
             await asyncio.sleep(delay)
-    print("[App] No se pudieron iniciar los consumers tras varios intentos")
+    log.error("No se pudieron iniciar los consumers tras %d intentos: no habrá push ni seguimiento",
+              max_attempts)
+    return False
 
 
 # Referencias fuertes a los tasks de fondo: si no se guardan, el event loop solo
@@ -54,21 +65,20 @@ def _spawn(coro):
 async def lifespan(app: FastAPI):
     try:
         ensure_turno_dia_hoy()
-    except Exception as e:
-        print(f"[Setup] Error creando turno_dia: {e}")
+    except Exception:
+        log.exception("No se pudo crear el turno_dia de hoy")
     # Cada worker de uvicorn necesita esta tarea corriendo para poder entregar
     # mensajes a estudiantes conectados a OTRO worker (ver shared/ws_bus.py).
     _spawn(start_ws_bus_listener(queue_manager, active_service_manager))
-    print("[App] Listener del bus de WebSockets iniciado")
     _spawn(inactivity_worker())
-    print("[App] Worker de inactividad iniciado")
     _spawn(active_service_worker())
-    print("[App] Worker de active-service iniciado")
     _spawn(_start_consumers_with_retry())
+    log.info("Tareas de fondo iniciadas: bus de WebSockets, worker de inactividad, active-service, consumers")
     yield
 
 
 app = FastAPI(title="SW603 — Sistema de Comedor UNI", lifespan=lifespan)
+registrar_manejo_de_errores(app)
 
 app.add_middleware(
     CORSMiddleware,

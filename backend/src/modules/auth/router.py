@@ -1,6 +1,10 @@
+import logging
 import uuid
 
-from fastapi import APIRouter, Body, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketDisconnect
+
+from ...shared.errores import SesionInvalida
+from ...shared.validacion import UUID4_PATTERN
 
 from .biometric import compare_faces
 from .estudiante_repo import upsert_estudiante
@@ -17,6 +21,7 @@ from .schemas import (
 from .service import parse_student_data
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 @router.post("/parse-data", response_model=ParseDataResponse)
@@ -31,7 +36,7 @@ def parse_data(data: ParseDataRequest = Body(...)):
         apellido_materno=result["apellido_materno"],
         email=result["email"],
     )
-    print(f"[*] Estudiante guardado en DB: {result['codigo']}")
+    log.info("Estudiante %s guardado en la base", result["codigo"])
 
     sid = str(uuid.uuid4())
     old_sid = create_session(
@@ -61,7 +66,7 @@ async def session_takeover(data: TakeoverRequest = Body(...)):
     anterior en tiempo real (WebSocket). Se usa cuando el usuario elige "continuar aquí".
     """
     if not get_session(data.sid):
-        raise HTTPException(status_code=401, detail="Sesión inválida o expirada")
+        raise SesionInvalida()
     old_sid = takeover_session(data.sid)
     if old_sid:
         await session_manager.revoke(old_sid)
@@ -92,7 +97,7 @@ async def session_ws(ws: WebSocket, sid: str):
 def verify_biometric(data: BiometricVerifyRequest = Body(...)):
     session = get_session(data.sid)
     if not session:
-        raise HTTPException(status_code=401, detail="Sesión inválida o expirada")
+        raise SesionInvalida()
 
     foto_ref = session.get("foto_base64")
     if not foto_ref:
@@ -100,8 +105,10 @@ def verify_biometric(data: BiometricVerifyRequest = Body(...)):
 
     try:
         verified, distance = compare_faces(foto_ref, data.photo_base64)
-    except Exception as e:
-        print(f"[!] Error en comparación biométrica: {e}")
+    except Exception:
+        # Foto corrupta o fallo del modelo: se registra aquí (frontera) y el
+        # cliente recibe un mensaje sin detalles internos.
+        log.exception("Falló la comparación biométrica")
         raise HTTPException(status_code=500, detail="Error al procesar la comparación de rostros")
 
     return BiometricVerifyResponse(
@@ -112,11 +119,11 @@ def verify_biometric(data: BiometricVerifyRequest = Body(...)):
 
 
 @router.get("/me")
-def get_me(sid: str):
+def get_me(sid: str = Query(pattern=UUID4_PATTERN)):
     """Valida el sid y devuelve los datos de sesión. Usado al reabrir la app."""
     session = get_session(sid)
     if not session:
-        raise HTTPException(status_code=401, detail="Sesión expirada")
+        raise SesionInvalida("Sesión expirada")
     return {
         "sid":               sid,
         "codigo":            session["codigo"],

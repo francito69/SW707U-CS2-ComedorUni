@@ -1,11 +1,13 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from ...shared.validacion import MAX_FOTO_BASE64, MAX_HTML_PORTAL, Sid
 
 
 class ParseDataRequest(BaseModel):
-    home_html: str = ""
-    cursos_html: str = ""
-    datos_html: str = ""
-    device_id: str = ""            # identificador estable del dispositivo
+    home_html: str = Field(default="", max_length=MAX_HTML_PORTAL)
+    cursos_html: str = Field(default="", max_length=MAX_HTML_PORTAL)
+    datos_html: str = Field(default="", max_length=MAX_HTML_PORTAL)
+    device_id: str = Field(default="", max_length=128)  # identificador estable del dispositivo
 
 
 class ParseDataResponse(BaseModel):
@@ -18,12 +20,12 @@ class ParseDataResponse(BaseModel):
 
 
 class TakeoverRequest(BaseModel):
-    sid: str
+    sid: Sid
 
 
 class BiometricVerifyRequest(BaseModel):
-    sid: str
-    photo_base64: str
+    sid: Sid
+    photo_base64: str = Field(min_length=1, max_length=MAX_FOTO_BASE64)
 
 
 class BiometricVerifyResponse(BaseModel):
@@ -33,4 +35,4 @@ class BiometricVerifyResponse(BaseModel):
 
 
 class LogoutRequest(BaseModel):
-    sid: str
+    sid: Sid

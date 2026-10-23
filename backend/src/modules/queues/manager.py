@@ -1,4 +1,8 @@
+import logging
+
 from fastapi import WebSocket
+
+log = logging.getLogger(__name__)
 
 
 class QueueConnectionManager:
@@ -9,11 +13,11 @@ class QueueConnectionManager:
     async def connect(self, codigo: str, ws: WebSocket) -> None:
         await ws.accept()
         self._connections[codigo] = ws
-        print(f"[WS] {codigo} conectado — {len(self._connections)} conexión(es) activa(s)")
+        log.debug("WS de cola: %s conectado, %d en este worker", codigo, len(self._connections))
 
     def disconnect(self, codigo: str) -> None:
         self._connections.pop(codigo, None)
-        print(f"[WS] {codigo} desconectado")
+        log.debug("WS de cola: %s desconectado", codigo)
 
     def is_connected(self, codigo: str) -> bool:
         return codigo in self._connections
@@ -44,11 +48,11 @@ class ActiveServiceConnectionManager:
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._connections.add(ws)
-        print(f"[WS] active-service conectado — {len(self._connections)} conexión(es) activa(s)")
+        log.debug("WS active-service conectado, %d en este worker", len(self._connections))
 
     def disconnect(self, ws: WebSocket) -> None:
         self._connections.discard(ws)
-        print(f"[WS] active-service desconectado — {len(self._connections)} conexión(es) activa(s)")
+        log.debug("WS active-service desconectado, %d en este worker", len(self._connections))
 
     async def broadcast(self, message: dict) -> None:
         for ws in list(self._connections):

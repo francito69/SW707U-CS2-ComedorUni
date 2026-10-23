@@ -1,8 +1,15 @@
+import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import NamedTuple, Optional
 from zoneinfo import ZoneInfo
 
+import psycopg2.errors
+
+from ...shared.contratos import asegura, requiere
 from ...shared.db import get_db_conn
+from ...shared.errores import SinRaciones, TurnoDuplicado
+
+log = logging.getLogger(__name__)
 
 PING_TIMEOUT_SECONDS = 180  # 3 minutos
 LIMA_TZ = ZoneInfo("America/Lima")
@@ -25,7 +32,7 @@ def ensure_turno_dia_hoy() -> None:
                     "INSERT INTO turno_dia (config_id, fecha, raciones_max) VALUES (%s, %s, %s) ON CONFLICT (config_id, fecha) DO NOTHING",
                     (config_id, hoy, raciones_max),
                 )
-                print(f"[Setup] turno_dia {tipo} {hoy} — OK")
+                log.info("turno_dia %s %s listo", tipo, hoy)
         conn.commit()
     finally:
         conn.close()
@@ -274,38 +281,66 @@ def get_raciones_max_turno_dia(turno_dia_id: int) -> int:
         conn.close()
 
 
-def crear_turno(estudiante_id: int, turno_dia_id: int, conn=None) -> int:
-    """Calcula y crea el siguiente turno dentro de una transacción mutex sobre turno_dia."""
+class TurnoCreado(NamedTuple):
+    numero: int
+    raciones_restantes: int
+
+
+def crear_turno(estudiante_id: int, turno_dia_id: int, raciones_max: int, conn=None) -> TurnoCreado:
+    """
+    Asigna el siguiente número de turno en una sección crítica sobre turno_dia.
+
+    Precondiciones: ids y raciones_max positivos; el turno_dia existe.
+    Postcondiciones: el número es exactamente el máximo previo + 1 y los turnos
+    activos del día no superan raciones_max (invariante de aforo).
+    Errores de negocio: SinRaciones si ya no quedan cupos; TurnoDuplicado si el
+    estudiante ya tiene un turno activo (lo garantiza idx_turnos_activo).
+    """
+    requiere(estudiante_id > 0, "estudiante_id debe ser positivo")
+    requiere(turno_dia_id > 0, "turno_dia_id debe ser positivo")
+    requiere(raciones_max > 0, "raciones_max debe ser positivo")
+
     _conn = conn or get_db_conn()
     try:
         with _conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM turno_dia WHERE id = %s FOR UPDATE",
-                (turno_dia_id,),
-            )
-            if cur.fetchone() is None:
-                raise ValueError(f"turno_dia_id {turno_dia_id} no existe")
+            # FOR UPDATE serializa a todos los que piden turno en este turno_dia:
+            # el conteo de raciones y el INSERT ocurren sin que nadie se intercale.
+            cur.execute("SELECT id FROM turno_dia WHERE id = %s FOR UPDATE", (turno_dia_id,))
+            requiere(cur.fetchone() is not None, f"turno_dia {turno_dia_id} existe")
 
             cur.execute(
                 """
-                SELECT COALESCE(MAX(numero_turno), 0) + 1
+                SELECT COUNT(*) FILTER (WHERE estado != 'CANCELADO'),
+                       COALESCE(MAX(numero_turno), 0)
                 FROM turnos
                 WHERE turno_dia_id = %s
                 """,
                 (turno_dia_id,),
             )
-            numero_generado = cur.fetchone()[0]
+            activos, ultimo_numero = cur.fetchone()
+            if activos >= raciones_max:
+                _conn.rollback()
+                raise SinRaciones()
 
-            cur.execute(
-                """
-                INSERT INTO turnos (estudiante_id, turno_dia_id, numero_turno)
-                VALUES (%s, %s, %s) RETURNING numero_turno
-                """,
-                (estudiante_id, turno_dia_id, numero_generado),
-            )
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO turnos (estudiante_id, turno_dia_id, numero_turno)
+                    VALUES (%s, %s, %s) RETURNING numero_turno
+                    """,
+                    (estudiante_id, turno_dia_id, ultimo_numero + 1),
+                )
+            except psycopg2.errors.UniqueViolation as e:
+                _conn.rollback()
+                if e.diag.constraint_name == "idx_turnos_activo":
+                    raise TurnoDuplicado("Ya tienes un turno activo en este servicio") from e
+                raise
             numero = cur.fetchone()[0]
+
+        asegura(numero == ultimo_numero + 1, "el número de turno es el máximo previo + 1")
+        asegura(activos + 1 <= raciones_max, "los turnos activos no superan raciones_max")
         _conn.commit()
-        return numero
+        return TurnoCreado(numero=numero, raciones_restantes=raciones_max - activos - 1)
     finally:
         if conn is None:
             _conn.close()

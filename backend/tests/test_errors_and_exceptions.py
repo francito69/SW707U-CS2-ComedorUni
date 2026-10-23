@@ -1,164 +1,146 @@
 """
-Pruebas de Manejo de Errores y Excepciones — ComedorUNI
-Verifica distinción entre Condiciones de Error de Negocio vs Excepciones Técnicas de Runtime,
-mitigación del antipatrón Log-and-Throw y ausencia de fugas de información.
-Rúbrica SW707: Criterio 'Manejo de errores y excepciones' (15%)
+Manejo de errores y excepciones (rúbrica: 15 %).
+
+- Condición de error (regla de negocio): 4xx con un `codigo` estable, sin traza.
+- Falla de infraestructura (Postgres, Redis): 503 sin filtrar detalles internos.
+- Error inesperado: 500 genérico, registrado UNA sola vez (sin log-and-throw).
+Cada respuesta lleva el id del request para cruzarla con el log.
 """
-import unittest
+import logging
+import re
+import uuid
+from unittest.mock import Mock
 
-try:
-    from fastapi import HTTPException
-except ImportError:
-    class HTTPException(Exception):
-        def __init__(self, status_code: int, detail: str):
-            super().__init__(detail)
-            self.status_code = status_code
-            self.detail = detail
+import psycopg2
+import psycopg2.pool
+import pytest
+import redis
 
+from backend.src.modules.queues import router
+from backend.src.shared import http_errores
+from backend.src.shared.logs import _RequestIdFilter
+from backend.src.shared.errores import (
+    EstudianteNoRegistrado, SinRaciones, TurnoDuplicado, TurnoNoActivo, TurnoNoHabilitado,
+)
 
-class TestErrorAndExceptionHandling(unittest.TestCase):
-    """
-    Políticas de errores según la teoría de Resilient and Observable Systems (Sesión 5):
-    1. Distinción conceptual: Condición de Error (regla de negocio esperada) vs
-       Excepción de Runtime (fallo de infraestructura/ambiente inesperado).
-    2. Respuestas API limpias: códigos HTTP semánticos (400, 401, 404, 409, 503)
-       sin exponer secretos, contraseñas ni tracebacks internos al usuario final.
-    3. Prevención de antipatrones como 'Log and Throw' y 'Catch-all silencioso'.
-    """
-
-    def test_domain_error_conditions_mapping(self):
-        """
-        Verificación de Condiciones de Error de Negocio:
-        Son situaciones esperadas del dominio y deben mapearse a códigos HTTP 4xx explícitos.
-        """
-        def handle_queue_business_rules(session_valid: bool, student_exists: bool,
-                                        already_has_turn: bool, slots_remaining: int):
-            if not session_valid:
-                raise HTTPException(status_code=401, detail="Sesión inválida o expirada")
-            if not student_exists:
-                raise HTTPException(status_code=404, detail="Estudiante no registrado en la base de datos")
-            if already_has_turn:
-                raise HTTPException(status_code=409, detail="Ya tienes un turno activo reservado")
-            if slots_remaining <= 0:
-                raise HTTPException(status_code=400, detail="Se agotaron las raciones para este turno")
-            return {"status": "ok"}
-
-        # 401 Unauthorized
-        with self.assertRaises(HTTPException) as ctx:
-            handle_queue_business_rules(False, True, False, 10)
-        self.assertEqual(ctx.exception.status_code, 401)
-        self.assertEqual(ctx.exception.detail, "Sesión inválida o expirada")
-
-        # 404 Not Found
-        with self.assertRaises(HTTPException) as ctx:
-            handle_queue_business_rules(True, False, False, 10)
-        self.assertEqual(ctx.exception.status_code, 404)
-
-        # 409 Conflict (Duplicado)
-        with self.assertRaises(HTTPException) as ctx:
-            handle_queue_business_rules(True, True, True, 10)
-        self.assertEqual(ctx.exception.status_code, 409)
-
-        # 400 Bad Request (Aforo agotado)
-        with self.assertRaises(HTTPException) as ctx:
-            handle_queue_business_rules(True, True, False, 0)
-        self.assertEqual(ctx.exception.status_code, 400)
-
-    def test_runtime_technical_exceptions_handling(self):
-        """
-        Verificación de Excepciones Técnicas de Runtime:
-        Fallas ambientales (ej. base de datos inaccesible, broker caído).
-        Deben traducirse a un error controlado (503 Service Unavailable) sin exponer tracebacks.
-        """
-        class OperationalError(Exception):
-            pass
-
-        def service_query_db():
-            raise OperationalError("could not connect to server: Connection refused on port 5433")
-
-        def safe_api_gateway():
-            try:
-                return service_query_db()
-            except OperationalError:
-                # Traducción arquitectónica de excepción de runtime
-                raise HTTPException(
-                    status_code=503,
-                    detail="El servicio de datos no está disponible temporalmente. Intente en unos minutos."
-                )
-
-        with self.assertRaises(HTTPException) as ctx:
-            safe_api_gateway()
-
-        self.assertEqual(ctx.exception.status_code, 503)
-        # La respuesta es limpia para el cliente: no contiene host, puerto ni passwords
-        self.assertNotIn("5433", ctx.exception.detail)
-        self.assertIn("no está disponible temporalmente", ctx.exception.detail)
-
-    def test_prevention_of_log_and_throw_antipattern(self):
-        """
-        Verificación contra el antipatrón 'Log and Throw':
-        En una arquitectura multicapa, una excepción NO debe ser registrada con log.error()
-        y vuelta a lanzar en cada capa intermedia, pues satura el log con ruido duplicado.
-        Debe registrarse con contexto enriquecido (Correlation ID) en la capa de frontera.
-        """
-        log_entries = []
-
-        class LoggerMock:
-            @staticmethod
-            def error(msg, correlation_id=None):
-                log_entries.append({"msg": msg, "cid": correlation_id})
-
-        # Capa de persistencia: lanza error técnico sin loguear duplicado
-        def repo_layer():
-            raise ValueError("Registro no encontrado en PostgreSQL")
-
-        # Capa de servicio: agrega contexto de negocio y propaga
-        def service_layer():
-            try:
-                repo_layer()
-            except ValueError as e:
-                # Transforma o enriquece, no hace log.error() + rethrow
-                raise LookupError(f"Turno no disponible: {e}")
-
-        # Capa de frontera (Controller / Gateway): loguea UNA SOLA VEZ con Correlation ID
-        def controller_layer(correlation_id: str):
-            try:
-                service_layer()
-            except LookupError as e:
-                LoggerMock.error(f"[Gateway] Fallo controlado: {e}", correlation_id=correlation_id)
-                raise HTTPException(status_code=404, detail="Turno no encontrado")
-
-        cid = "req-uuid-98765"
-        with self.assertRaises(HTTPException):
-            controller_layer(cid)
-
-        # Solo existe UNA entrada de log para la falla, evitando duplicidad
-        self.assertEqual(len(log_entries), 1)
-        self.assertEqual(log_entries[0]["cid"], cid)
-        self.assertIn("Fallo controlado", log_entries[0]["msg"])
-
-    def test_structured_error_payload_integrity(self):
-        """
-        Garantiza que el payload de error HTTP siga un contrato uniforme de respuesta JSON.
-        """
-        def format_api_error(status_code: int, error_code: str, message: str) -> dict:
-            return {
-                "error": {
-                    "status": status_code,
-                    "code": error_code,
-                    "message": message,
-                    "retryable": status_code in [503, 504],
-                }
-            }
-
-        payload = format_api_error(409, "TURNO_DUPLICADO", "El estudiante ya cuenta con reserva activa")
-        self.assertEqual(payload["error"]["status"], 409)
-        self.assertEqual(payload["error"]["code"], "TURNO_DUPLICADO")
-        self.assertFalse(payload["error"]["retryable"])
-
-        payload_retry = format_api_error(503, "DB_TIMEOUT", "Base de datos en recuperación")
-        self.assertTrue(payload_retry["error"]["retryable"])
+SID = str(uuid.uuid4())
+SESION = {"codigo": "20224085D"}
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _join(client, **headers):
+    return client.post("/queue/join", json={"sid": SID, "tipo": "ALMUERZO"}, headers=headers)
+
+
+def test_sesion_inexistente_es_401_con_codigo_estable(client, monkeypatch):
+    monkeypatch.setattr(router, "get_session", lambda sid: None)
+    r = _join(client)
+    assert r.status_code == 401
+    assert r.json()["codigo"] == "sesion_invalida"
+
+
+@pytest.mark.parametrize("error, status, codigo", [
+    (TurnoNoActivo("No hay turno 'ALMUERZO' activo"), 400, "turno_no_activo"),
+    (EstudianteNoRegistrado(), 404, "estudiante_no_registrado"),
+    (TurnoDuplicado("Ya tienes el turno #3"), 409, "turno_duplicado"),
+    (TurnoNoHabilitado(), 409, "turno_no_habilitado"),
+    (SinRaciones(), 400, "sin_raciones"),
+])
+def test_condiciones_de_negocio_se_traducen_a_su_4xx(client, monkeypatch, error, status, codigo):
+    monkeypatch.setattr(router, "_reservar_turno", Mock(side_effect=error))
+    r = _join(client)
+    assert r.status_code == status
+    cuerpo = r.json()
+    assert cuerpo["codigo"] == codigo
+    assert cuerpo["detail"] == error.mensaje
+
+
+def test_regla_real_turno_duplicado_llega_como_409(client, monkeypatch):
+    monkeypatch.setattr(router, "get_session", lambda sid: SESION)
+    monkeypatch.setattr(router, "get_turno_dia_activo_por_tipo",
+                        lambda tipo: {"tipo": "ALMUERZO", "config_id": 1, "raciones_max": 100})
+    monkeypatch.setattr(router, "get_estudiante_id", lambda codigo: 10)
+    monkeypatch.setattr(router, "get_turno_dia_id", lambda config_id: 5)
+    monkeypatch.setattr(router, "turno_existente", lambda e, t: {"numero_turno": 3, "estado": "ESPERANDO"})
+    monkeypatch.setattr(router, "crear_turno", Mock(side_effect=AssertionError("no debe crear")))
+
+    r = _join(client)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Ya tienes el turno #3 (ESPERANDO)"
+
+
+@pytest.mark.parametrize("falla", [
+    psycopg2.OperationalError('connection to server at "10.0.0.5", port 5432 failed: '
+                              'password authentication failed for user "postgres"'),
+    psycopg2.pool.PoolError("sin conexión libre a la base de datos tras 10s"),
+])
+def test_postgres_caido_responde_503_sin_filtrar_detalles(client, monkeypatch, falla):
+    monkeypatch.setattr(router, "get_session", lambda sid: SESION)
+    monkeypatch.setattr(router, "get_turno_dia_activo_por_tipo", Mock(side_effect=falla))
+
+    r = _join(client)
+
+    assert r.status_code == 503
+    assert r.json()["codigo"] == "servicio_no_disponible"
+    for secreto in ("10.0.0.5", "password", "postgres", "5432", "Traceback"):
+        assert secreto not in r.text
+
+
+def test_redis_caido_responde_503(client, monkeypatch):
+    monkeypatch.setattr(router, "get_session", Mock(side_effect=redis.exceptions.ConnectionError("redis:6379")))
+    r = client.get("/queue/status", params={"sid": SID})
+    assert r.status_code == 503
+    assert "6379" not in r.text
+
+
+def test_error_inesperado_es_500_generico_y_se_registra_una_sola_vez(client, monkeypatch, caplog):
+    monkeypatch.setattr(router, "_reservar_turno", Mock(side_effect=ZeroDivisionError("detalle interno")))
+
+    with caplog.at_level(logging.INFO):
+        r = _join(client)
+
+    assert r.status_code == 500
+    assert r.json()["codigo"] == "error_interno"
+    assert "detalle interno" not in r.text
+    con_traza = [rec for rec in caplog.records if rec.exc_info]
+    assert len(con_traza) == 1, "la excepción debe registrarse exactamente una vez"
+
+
+def test_condicion_de_negocio_no_se_registra_como_error(client, monkeypatch, caplog):
+    monkeypatch.setattr(router, "_reservar_turno", Mock(side_effect=SinRaciones()))
+    with caplog.at_level(logging.INFO):
+        _join(client)
+    assert not [rec for rec in caplog.records if rec.levelno >= logging.ERROR]
+
+
+def test_cada_respuesta_lleva_request_id_y_respeta_el_del_cliente(client, monkeypatch):
+    monkeypatch.setattr(router, "get_session", lambda sid: None)
+
+    propio = _join(client, **{"X-Request-ID": "abc123"})
+    assert propio.headers["X-Request-ID"] == "abc123"
+    assert propio.json()["request_id"] == "abc123"
+
+    generado = _join(client)
+    assert re.fullmatch(r"[0-9a-f]{12}", generado.headers["X-Request-ID"])
+
+
+def test_el_log_del_request_lleva_su_request_id(client, monkeypatch):
+    vistos = []
+
+    class Captura(logging.Handler):
+        def emit(self, record):
+            vistos.append(record.request_id)
+
+    handler = Captura()
+    handler.addFilter(_RequestIdFilter())  # el mismo filtro que usa el handler real
+    http_errores.log.addHandler(handler)
+    nivel_previo = http_errores.log.level
+    http_errores.log.setLevel(logging.INFO)
+    monkeypatch.setattr(router, "_reservar_turno", Mock(side_effect=SinRaciones()))
+    try:
+        _join(client, **{"X-Request-ID": "traza42"})
+    finally:
+        http_errores.log.removeHandler(handler)
+        http_errores.log.setLevel(nivel_previo)
+
+    assert vistos == ["traza42"]

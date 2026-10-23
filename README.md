@@ -1,12 +1,12 @@
 # ComedorUNI — Sistema de Turnos Virtuales y Colas Inteligentes
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React Native](https://img.shields.io/badge/React%20Native-Expo%2051-black?logo=expo)](https://expo.dev/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![React Native](https://img.shields.io/badge/React%20Native-Expo%2054-black?logo=expo)](https://expo.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](https://www.postgresql.org/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3-FF6600?logo=rabbitmq)](https://www.rabbitmq.com/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis)](https://redis.io/)
-[![Tests](https://img.shields.io/badge/Tests-21%20Passed-success?logo=pytest)](docs/DocumentoTecnicoParcial.md#10-pruebas-automatizadas-y-evidencias)
+[![Tests](https://img.shields.io/badge/Tests-69%20Passed-success?logo=pytest)](docs/DocumentoTecnicoParcial.md#10-pruebas-automatizadas-y-evidencias)
 [![SW707](https://img.shields.io/badge/SW707-Examen%20Parcial%20v1.0-blueviolet)](docs/DocumentoTecnicoParcial.md)
 
 **ComedorUNI** es una plataforma distribuida y reactiva para la gestión inteligente de colas virtuales en el Comedor Universitario de la **Universidad Nacional de Ingeniería (UNI)**. Elimina las colas físicas a la intemperie mediante un flujo móvil sincronizado en tiempo real, respaldado por una arquitectura de microservicios de infraestructura resiliente, asíncrona y transaccionalmente segura.
@@ -29,9 +29,9 @@
 El sistema implementa un **Monolito Modular Asíncrono** respaldado por contenedores especializados:
 
 - **Frontend Móvil/Web:** React Native con Expo Router y TypeScript; incorpora WebView institucional para login/scraping del Portal Alumnos UNI (`alumnos.uni.edu.pe`).
-- **Backend API & Real-Time:** FastAPI (ASGI/Uvicorn); expone endpoints REST, canal WebSocket `/ws/{codigo}` para notificaciones inmediatas y WebSocket de sesión única `/session/ws/{sid}`.
-- **Persistencia Transaccional (Fuente de Verdad):** PostgreSQL 15; garantiza unicidad de estudiante por servicio diario mediante índices únicos parciales y resuelve concurrencia de aforo con bloqueos `SELECT ... FOR UPDATE`.
-- **Sesiones Volátiles:** Redis 7; gestión de sesiones de usuario (`sid`) con TTL de 24 horas y revocación en tiempo real ante concurrencia de dispositivos.
+- **Backend API & Real-Time:** FastAPI (ASGI/Uvicorn, 6 workers en producción); expone endpoints REST, el WebSocket de cola `/queue/ws/{sid}`, el de turnos activos `/queue/ws/active-service` y el de sesión única `/session/ws/{sid}`.
+- **Persistencia Transaccional (Fuente de Verdad):** PostgreSQL 15; garantiza unicidad de estudiante por servicio diario mediante índices únicos parciales y resuelve la concurrencia de aforo contando las raciones bajo un bloqueo `SELECT ... FOR UPDATE`.
+- **Sesiones y Coordinación:** Redis 7; sesiones de usuario (`sid`) con TTL de 8 horas, revocación en tiempo real entre dispositivos, bus de WebSockets entre workers y lock de líder para las tareas periódicas.
 - **Broker de Mensajería:** RabbitMQ 3; Topic Exchange `comedor` con colas durables para desacoplar asíncronamente:
   - **M4 (Notificaciones Push):** Consume `turno.llamado` y `turno.cancelado` y despacha a Expo Push Service.
   - **M5 (Seguimiento):** Consume `turno.encolado` y `turno.atendido` e inserta trazabilidad histórica de forma idempotente en PostgreSQL.
@@ -43,23 +43,22 @@ El sistema implementa un **Monolito Modular Asíncrono** respaldado por contened
 
 | Criterio Evaluado | Peso | Implementación en ComedorUNI | Evidencia Automatizada |
 |---|:---:|---|---|
-| **Gestión de dependencias y reúso** | **10%** | Inventario auditado de dependencias en Python y Node.js. Cargas pesadas de IA biométrica (`DeepFace`) aisladas para no degradar el arranque. | [Capítulo 4](docs/DocumentoTecnicoParcial.md#4-gestión-de-dependencias-y-reúso) |
-| **Análisis de problemas de runtime** | **10%** | Corrección de desajuste de puerto PostgreSQL (5433 host vs 5432 container). Bucle de reintentos para RabbitMQ (`_start_consumers_with_retry`). Prevención de recolección de basura con `_background_tasks`. | [Capítulo 5](docs/DocumentoTecnicoParcial.md#5-análisis-de-problemas-de-runtime) |
-| **Design by Contract (DbC)** | **15%** | Precondiciones explícitas (sesión activa, aforo $>0$), postcondiciones monotónicas en tickets e invariantes de máquina de estados (`ESPERANDO` $\rightarrow$ `LLAMADO` $\rightarrow$ `ATENDIDO`). | `test_contracts.py` (5 pruebas) |
-| **Programación defensiva** | **10%** | Barricada (Digital Airlock) con Pydantic/Regex, sanitización estricta de códigos UNI, tratamiento de HTML raspado no confiable y consultas SQL parametrizadas. | `test_defensive.py` (5 pruebas) |
-| **Manejo de errores y excepciones** | **15%** | Distinción formal entre Condiciones de Error (400, 401, 404, 409) y Excepciones Técnicas (503). Erradicación del antipatrón *Log and Throw*. | `test_errors_and_exceptions.py` (4 pruebas) |
-| **Concurrencia** | **15%** | Reproducción automatizada de sobrecupo (overbooking) bajo interleaving no sincronizado vs resolución atómica mediante cerrojo `SELECT ... FOR UPDATE`. | `test_concurrency.py` (3 pruebas) |
-| **Tolerancia a fallas** | **15%** | Reintentos acotados al broker, procesamiento idempotente en M5 ante reentregas de red, degradación elegante ante caída de push y aislamiento en workers. | `test_resilience.py` (4 pruebas) |
-| **Pruebas y evidencias** | **5%** | Suite de 21 pruebas automatizadas estándar (`unittest`) con 100% de éxito en 0.24 segundos. | `backend/tests/` (21 pruebas) |
-| **Calidad de código y documentación** | **5%** | Documento técnico formal de 11 capítulos en Markdown, guion de exposición de 40 minutos, arquitectura C4 y bitácora de IA. | [docs/](docs/README.md) |
-| **TOTAL** | **100%** | **Cumplimiento Integral de la Etapa I (Línea Base v1.0)** | **Aprobado al 100%** |
+| **Gestión de dependencias y reúso** | **10%** | Versiones exactas en `requirements.txt`, auditadas con `pip-audit` (Pillow subido a 13.0.0 por 35 CVE); dependencia sin uso eliminada. | [Capítulo 4](docs/DocumentoTecnicoParcial.md#4-gestión-de-dependencias-y-reúso) |
+| **Análisis de problemas de runtime** | **10%** | Siete problemas reales con síntoma, causa y corrección (pool que se agotaba bajo carga, opencv 5, event loop bloqueado, puerto de PostgreSQL...). Logging con id de request. | [Capítulo 5](docs/DocumentoTecnicoParcial.md#5-análisis-de-problemas-de-runtime) |
+| **Design by Contract (DbC)** | **15%** | `requiere`/`asegura` en el código (`shared/contratos.py`), contrato completo de `crear_turno` y matriz de contratos de la API. | `test_contracts.py` (15 pruebas) |
+| **Programación defensiva** | **10%** | Validación en la frontera: `sid` UUID v4, tipo de turno en lista cerrada, topes de tamaño y código UNI validado en el HTML del portal. SQL siempre parametrizado. | `test_defensive.py` (23 pruebas) |
+| **Manejo de errores y excepciones** | **15%** | Errores de dominio → 4xx con `codigo`; PostgreSQL/Redis caídos → 503 sin filtrar detalles; inesperados → 500 registrado una sola vez. | `test_errors_and_exceptions.py` (14 pruebas) |
+| **Concurrencia** | **15%** | Conteo de raciones dentro de `SELECT ... FOR UPDATE`, sobreventa reproducida contra PostgreSQL real y prueba de carga con Locust (2000 usuarios). | `test_concurrency.py` (5 pruebas) + `tests/carga/` |
+| **Tolerancia a fallas** | **15%** | Reintentos de consumers, publicación best-effort con timeout, avisos en tiempo real que no revierten la operación, idempotencia de M5, worker que sobrevive a ciclos fallidos. | `test_resilience.py` (7 pruebas) |
+| **Pruebas y evidencias** | **5%** | 69 pruebas con `pytest` sobre el código real (7 de integración contra PostgreSQL) y prueba de carga reproducible. | `backend/tests/` |
+| **Calidad de código y documentación** | **5%** | Documento técnico de 11 capítulos alineado con el código, guion de exposición, arquitectura C4 y bitácora de IA. | [docs/](docs/README.md) |
 
 ---
 
 ## 🚀 Guía de Inicio Rápido (Quickstart Local)
 
 ### Requisitos Previos
-- Python 3.11 o superior.
+- Python 3.12 (las versiones de `requirements.txt` están verificadas con 3.12).
 - Node.js 20 o superior y npm.
 - Docker Engine y Docker Compose.
 
@@ -77,18 +76,15 @@ docker compose -f backend\docker-compose.yml up -d postgres redis rabbitmq
 ---
 
 ### 2. Ejecutar la Suite de Pruebas Automatizadas
-Para verificar inmediatamente la integridad de contratos, concurrencia, resiliencia y programación defensiva:
+Con el entorno del backend creado (paso 3) e instaladas las dependencias de desarrollo (`pip install -r backend/requirements-dev.txt`), desde la raíz:
 ```powershell
-python -m unittest discover backend/tests
+# Base de pruebas aislada (puerto 5434, datos en memoria) para las 7 pruebas de integración
+docker compose -f backend/tests/carga/docker-compose.carga.yml up -d postgres
+python -m pytest backend/tests
 ```
-*Salida esperada:*
-```text
-.....................
-----------------------------------------------------------------------
-Ran 21 tests in 0.239s
+*Salida esperada:* `69 passed`. Sin esa base, las 7 de integración se saltan (`62 passed, 7 skipped`).
 
-OK
-```
+La prueba de carga con Locust está en [`backend/tests/carga/`](backend/tests/carga/README.md).
 
 ---
 

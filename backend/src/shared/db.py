@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 from contextlib import contextmanager
@@ -6,8 +7,14 @@ import psycopg2
 import psycopg2.extensions
 import psycopg2.pool
 
+log = logging.getLogger(__name__)
+
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 _pool_init_lock = threading.Lock()
+# ThreadedConnectionPool lanza "pool exhausted" en vez de esperar cuando están
+# todas en uso; el semáforo hace que el request espere una conexión libre.
+_slots: threading.BoundedSemaphore | None = None
+_SLOT_TIMEOUT = float(os.getenv("DB_POOL_TIMEOUT", "10"))
 
 
 class _PooledConnectionProxy:
@@ -27,14 +34,20 @@ class _PooledConnectionProxy:
     el pool nunca ve ni gestiona directamente.
     """
 
-    __slots__ = ("_conn",)
+    __slots__ = ("_conn", "_liberada")
 
     def __init__(self, conn):
         object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_liberada", False)
 
     def close(self) -> None:
-        conn = object.__getattribute__(self, "_conn")
-        _get_pool().putconn(conn)
+        if object.__getattribute__(self, "_liberada"):
+            return
+        object.__setattr__(self, "_liberada", True)
+        try:
+            _get_pool().putconn(object.__getattribute__(self, "_conn"))
+        finally:
+            _slots.release()
 
     def __getattr__(self, name):
         return getattr(object.__getattribute__(self, "_conn"), name)
@@ -50,7 +63,7 @@ class _PooledConnectionProxy:
 
 
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
-    global _pool
+    global _pool, _slots
     if _pool is None:
         # Double-checked locking: sin esto, dos threads que llegan aquí a la
         # vez (típico en el arranque, con varios requests concurrentes en el
@@ -67,9 +80,13 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
                 dbname   = os.getenv("DB_NAME", "comedor_uni")
                 user     = os.getenv("DB_USER", "postgres")
                 password = os.getenv("DB_PASSWORD", "postgres")
-                minconn  = int(os.getenv("DB_POOL_MIN", "1"))
                 maxconn  = int(os.getenv("DB_POOL_MAX", "20"))
-                print(f"[DB] Creando pool ({minconn}-{maxconn}) hacia {host}:{port}/{dbname} como {user}")
+                # psycopg2 solo guarda una conexión devuelta si hay menos de
+                # `minconn` libres; si no, la cierra. Con minconn bajo, casi
+                # cada request abre y cierra una conexión TCP nueva.
+                minconn  = int(os.getenv("DB_POOL_MIN", str(maxconn)))
+                log.info("Creando pool (%d-%d) hacia %s:%s/%s como %s", minconn, maxconn, host, port, dbname, user)
+                _slots = threading.BoundedSemaphore(maxconn)
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn, maxconn,
                     host=host, port=port, dbname=dbname, user=user, password=password,
@@ -85,12 +102,20 @@ def get_db_conn() -> psycopg2.extensions.connection:
     pool en vez de cerrarla físicamente.
     """
     pool = _get_pool()
-    conn = pool.getconn()
-    if conn.closed:
-        # El servidor pudo haber matado esta conexión (timeout, reinicio).
-        # La descartamos del pool y pedimos una nueva.
-        pool.putconn(conn, close=True)
+    if not _slots.acquire(timeout=_SLOT_TIMEOUT):
+        raise psycopg2.pool.PoolError(
+            f"sin conexión libre a la base de datos tras {_SLOT_TIMEOUT:.0f}s"
+        )
+    try:
         conn = pool.getconn()
+        if conn.closed:
+            # El servidor pudo haber matado esta conexión (timeout, reinicio).
+            # La descartamos del pool y pedimos una nueva.
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+    except Exception:
+        _slots.release()
+        raise
     return _PooledConnectionProxy(conn)
 
 

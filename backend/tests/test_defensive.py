@@ -1,160 +1,117 @@
 """
-Pruebas de Programación Defensiva y Barricadas — ComedorUNI
-Verifica validación de entradas, filtrado en frontera (Digital Airlock) y datos no confiables.
-Rúbrica SW707: Criterio 'Programación defensiva' (10%)
+Programación defensiva (rúbrica: 10 %).
+
+Todo dato externo (cuerpo HTTP, query string, HTML del Portal UNI) se valida en
+la frontera antes de llegar a la lógica de negocio o a la base de datos.
 """
+import pathlib
 import re
-import unittest
+import uuid
+from unittest.mock import Mock
 
-try:
-    from pydantic import BaseModel, ValidationError, Field
-    HAS_PYDANTIC = True
-except ImportError:
-    HAS_PYDANTIC = False
-    class ValidationError(ValueError):
-        pass
+import pytest
 
+from backend.src.modules.auth import router as auth_router
+from backend.src.modules.auth.service import parse_student_data
+from backend.src.modules.queues import router
+from backend.src.shared.errores import DatosPortalInvalidos
+from backend.src.shared.validacion import MAX_FOTO_BASE64
 
-class TestDefensiveProgramming(unittest.TestCase):
-    """
-    Verificación del principio de Barricada (Digital Airlock) y supervivencia Fail-Fast:
-    Todo dato externo proveniente de HTTP, scraping de WebView o WebSocket es tratado
-    como NO CONFIABLE y debe ser validado antes de entrar al núcleo de negocio.
-    """
-
-    class PurePythonJoinQueuePayload:
-        """Barricada defensiva pura sin dependencias externas."""
-        def __init__(self, sid: str, tipo: str):
-            if not isinstance(sid, str) or not (10 <= len(sid) <= 128):
-                raise ValidationError("sid debe ser string entre 10 y 128 caracteres")
-            if not isinstance(tipo, str) or not re.match(r"^(ALMUERZO|CENA|PRUEBA)$", tipo):
-                raise ValidationError("tipo debe ser estrictamente 'ALMUERZO', 'CENA' o 'PRUEBA'")
-            self.sid = sid
-            self.tipo = tipo
-
-    class StudentCodeValidator:
-        @staticmethod
-        def validate_codigo_uni(codigo: str) -> str:
-            """
-            Valida formato oficial de código UNI: 8 dígitos + 1 letra alfanumérica
-            (e.g., '20210001A', '20194512K'). Rechaza caracteres peligrosos de inyección.
-            """
-            if not isinstance(codigo, str):
-                raise TypeError("El código debe ser una cadena de texto")
-            sanitized = codigo.strip().upper()
-            if not re.match(r"^[0-9]{8}[A-Z]$", sanitized):
-                raise ValueError(f"Formato de código UNI inválido: '{codigo}'")
-            return sanitized
-
-    def test_barricade_rejects_malformed_shift_type(self):
-        """
-        Barricada de tipos: Filtra tipos de comida no permitidos.
-        Previene que inyecciones de valores arbitrarios alcancen el SQL.
-        """
-        # Entrada válida
-        valid = self.PurePythonJoinQueuePayload(sid="session-uuid-123456", tipo="ALMUERZO")
-        self.assertEqual(valid.tipo, "ALMUERZO")
-
-        # Entrada inválida: tipo inventado
-        with self.assertRaises(ValidationError):
-            self.PurePythonJoinQueuePayload(sid="session-uuid-123456", tipo="DESAYUNO_SPECIAL")
-
-        # Entrada maliciosa: inyección SQL en el tipo
-        with self.assertRaises(ValidationError):
-            self.PurePythonJoinQueuePayload(sid="session-uuid-123456", tipo="ALMUERZO'; DROP TABLE turnos; --")
-
-    def test_barricade_rejects_empty_or_oversized_sid(self):
-        """
-        Barricada de longitud: El identificador de sesión debe tener un tamaño controlado.
-        Previene DoS por buffers excesivos o cadenas vacías.
-        """
-        # Demasiado corto (< 10 chars)
-        with self.assertRaises(ValidationError):
-            self.PurePythonJoinQueuePayload(sid="abc", tipo="ALMUERZO")
-
-        # Demasiado largo (> 128 chars)
-        with self.assertRaises(ValidationError):
-            self.PurePythonJoinQueuePayload(sid="x" * 200, tipo="ALMUERZO")
-
-    def test_student_code_sanitization_and_validation(self):
-        """
-        Barricada de identidad: Solo códigos con estructura exacta 8 dígitos + 1 letra son admitidos.
-        """
-        # Caso válido normal
-        self.assertEqual(
-            self.StudentCodeValidator.validate_codigo_uni("20212001A"),
-            "20212001A"
-        )
-        # Caso válido con espacios y minúsculas (sanitizado)
-        self.assertEqual(
-            self.StudentCodeValidator.validate_codigo_uni("  20212001a  "),
-            "20212001A"
-        )
-
-        # Casos inválidos (inyecciones, longitud errónea)
-        invalid_codes = [
-            "20212001",           # Falta letra
-            "202120011A",         # 9 dígitos
-            "20212001@#$",        # Caracteres especiales
-            "'; SELECT * --",     # Inyección SQL
-            "",                   # Vacío
-        ]
-        for bad_code in invalid_codes:
-            with self.assertRaises(ValueError):
-                self.StudentCodeValidator.validate_codigo_uni(bad_code)
-
-    def test_untrusted_html_scraping_defensive_fallbacks(self):
-        """
-        Barricada de datos de Scraping (Portal Alumnos):
-        Si el HTML del portal cambia o viene incompleto, el parser no debe lanzar
-        un error no controlado en el núcleo, sino aplicar valores defensivos o fallar controladamente.
-        """
-        from bs4 import BeautifulSoup
-
-        def defensive_html_parse(html_snippet: str) -> dict:
-            soup = BeautifulSoup(html_snippet or "", "html.parser")
-            nombre_elem = soup.find("span", {"id": "lblNombre"})
-            nombre = nombre_elem.get_text().strip() if nombre_elem else "ESTUDIANTE NO IDENTIFICADO"
-
-            codigo_elem = soup.find("span", {"id": "lblCodigo"})
-            codigo = codigo_elem.get_text().strip() if codigo_elem else None
-
-            if not codigo:
-                raise ValueError("Falta campo crítico 'código' en HTML raspado")
-
-            return {"nombre": nombre, "codigo": codigo}
-
-        # HTML completo válido
-        html_ok = "<span id='lblNombre'>JUAN PEREZ</span><span id='lblCodigo'>20201234B</span>"
-        res = defensive_html_parse(html_ok)
-        self.assertEqual(res["codigo"], "20201234B")
-        self.assertEqual(res["nombre"], "JUAN PEREZ")
-
-        # HTML corrupto o incompleto: falta código
-        html_corrupt = "<span id='lblNombre'>JUAN PEREZ</span>"
-        with self.assertRaises(ValueError) as ctx:
-            defensive_html_parse(html_corrupt)
-        self.assertIn("Falta campo crítico", str(ctx.exception))
-
-    def test_defensive_parameterized_sql_simulation(self):
-        """
-        Programación defensiva contra SQL Injection:
-        Verifica que todas las operaciones de persistencia utilicen placeholders parametrizados (%s)
-        en lugar de concatenación dinámica de cadenas f-strings.
-        """
-        def execute_query_safely(cursor_mock, estudiante_id: int, turno_dia_id: int):
-            cursor_mock.execute(
-                "SELECT id, numero_turno, estado FROM turnos WHERE estudiante_id = %s AND turno_dia_id = %s",
-                (estudiante_id, turno_dia_id)
-            )
-
-        mock_cursor = unittest.mock.MagicMock()
-        execute_query_safely(mock_cursor, 10, 2)
-        mock_cursor.execute.assert_called_once_with(
-            "SELECT id, numero_turno, estado FROM turnos WHERE estudiante_id = %s AND turno_dia_id = %s",
-            (10, 2)
-        )
+SID = str(uuid.uuid4())
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.fixture
+def reservar(monkeypatch):
+    """Espía de la lógica de /join: si la barricada funciona, nunca se llama."""
+    espia = Mock(side_effect=AssertionError("la petición inválida llegó al servicio"))
+    monkeypatch.setattr(router, "_reservar_turno", espia)
+    return espia
+
+
+@pytest.mark.parametrize("tipo", [
+    "DESAYUNO_SPECIAL",
+    "ALMUERZO'; DROP TABLE turnos; --",
+    "almuerzo",
+    "",
+])
+def test_join_rechaza_tipos_fuera_de_la_lista_blanca(client, reservar, tipo):
+    r = client.post("/queue/join", json={"sid": SID, "tipo": tipo})
+    assert r.status_code == 422
+    reservar.assert_not_called()
+
+
+@pytest.mark.parametrize("sid", [
+    "abc",
+    "x" * 200,
+    "carga-CARGA00001",
+    "' OR 1=1 --",
+    "00000000-0000-1000-8000-000000000000",  # UUID, pero no v4: no lo genera /parse-data
+])
+def test_join_rechaza_sid_que_no_es_uuid4(client, reservar, sid):
+    r = client.post("/queue/join", json={"sid": sid, "tipo": "ALMUERZO"})
+    assert r.status_code == 422
+    reservar.assert_not_called()
+
+
+def test_status_rechaza_sid_malformado_en_query_string(client, monkeypatch):
+    monkeypatch.setattr(router, "get_session", Mock(side_effect=AssertionError("no debe consultar Redis")))
+    r = client.get("/queue/status", params={"sid": "' OR 1=1 --"})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("largo", [0, MAX_FOTO_BASE64 + 1], ids=["vacia", "mayor_al_tope"])
+def test_biometrico_rechaza_foto_vacia_o_demasiado_grande(client, monkeypatch, largo):
+    monkeypatch.setattr(auth_router, "compare_faces", Mock(side_effect=AssertionError("no debe comparar")))
+    r = client.post("/verify-biometric", json={"sid": SID, "photo_base64": "A" * largo})
+    assert r.status_code == 422
+
+
+def test_push_token_no_puede_exceder_la_columna_de_la_base(client, monkeypatch):
+    monkeypatch.setattr(router, "save_push_token", Mock(side_effect=AssertionError("no debe guardar")))
+    r = client.post("/queue/register-push-token", json={"sid": SID, "push_token": "x" * 256})
+    assert r.status_code == 422
+
+
+def _html_datos(codigo: str) -> str:
+    return f"<input id='txt-codigo' value='{codigo}'><input id='txt-mail-uni' value='a@uni.pe'>"
+
+
+@pytest.mark.parametrize("datos_html", [
+    "",                                   # el portal no devolvió la página
+    "<html><body>Mantenimiento</body></html>",
+    _html_datos(""),
+    _html_datos("No encontrado"),
+    _html_datos("2022408D"),              # 7 dígitos
+    _html_datos("20224085D OR 1=1"),
+    _html_datos("20224085D<script>"),
+])
+def test_parser_rechaza_html_sin_codigo_uni_valido(datos_html):
+    with pytest.raises(DatosPortalInvalidos):
+        parse_student_data("", "", datos_html)
+
+
+def test_parser_normaliza_un_codigo_valido():
+    assert parse_student_data("", "", _html_datos("  20224085d "))["codigo"] == "20224085D"
+
+
+def test_parse_data_con_html_roto_no_crea_estudiante_ni_sesion(client, monkeypatch):
+    monkeypatch.setattr(auth_router, "upsert_estudiante", Mock(side_effect=AssertionError("no debe guardar")))
+    monkeypatch.setattr(auth_router, "create_session", Mock(side_effect=AssertionError("no debe crear sesión")))
+
+    r = client.post("/parse-data", json={"home_html": "", "cursos_html": "", "datos_html": "<p>error</p>"})
+
+    assert r.status_code == 422
+    assert r.json()["codigo"] == "datos_portal_invalidos"
+
+
+def test_ninguna_consulta_sql_se_arma_concatenando_texto():
+    """Toda consulta usa parámetros (%s); armar SQL con f-strings o % abre la puerta a inyección."""
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    peligrosas = re.compile(r"""execute\(\s*(f["']|["'][^"']*["']\s*(%|\.format))""")
+    hallazgos = [
+        f"{p.relative_to(src)}:{n}"
+        for p in src.rglob("*.py")
+        for n, linea in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if peligrosas.search(linea)
+    ]
+    assert hallazgos == []

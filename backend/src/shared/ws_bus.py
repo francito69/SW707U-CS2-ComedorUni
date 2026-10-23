@@ -17,10 +17,14 @@ main.py); cada uno recibe la publicación y solo la entrega si tiene esa
 conexión conectada localmente. Así no importa en qué worker esté el
 estudiante — el mensaje siempre le llega.
 """
+import asyncio
 import json
+import logging
 import os
 
 import redis.asyncio as aioredis
+
+log = logging.getLogger(__name__)
 
 CHANNEL_SESSION   = "ws:session"     # mensajes dirigidos a un `codigo` de estudiante
 CHANNEL_BROADCAST = "ws:broadcast"   # mensajes para todos (estado de turnos activos)
@@ -40,13 +44,24 @@ def _get_redis() -> aioredis.Redis:
 
 
 async def publish_to_session(codigo: str, message: dict) -> None:
-    """Manda `message` al estudiante `codigo`, esté conectado al worker que esté."""
-    await _get_redis().publish(CHANNEL_SESSION, json.dumps({"codigo": codigo, "message": message}))
+    """
+    Manda `message` al estudiante `codigo`, esté conectado al worker que esté.
+    Es un aviso en tiempo real, no la fuente de verdad: si Redis no responde se
+    registra y se sigue (el estado ya quedó en Postgres y la app lo consulta
+    con /queue/status), en vez de hacer fallar una operación ya confirmada.
+    """
+    try:
+        await _get_redis().publish(CHANNEL_SESSION, json.dumps({"codigo": codigo, "message": message}))
+    except Exception as e:
+        log.warning("No se pudo publicar aviso a %s por el bus de WebSockets: %s", codigo, e)
 
 
 async def publish_broadcast(message: dict) -> None:
     """Manda `message` a todos los conectados a /queue/ws/active-service en todos los workers."""
-    await _get_redis().publish(CHANNEL_BROADCAST, json.dumps(message))
+    try:
+        await _get_redis().publish(CHANNEL_BROADCAST, json.dumps(message))
+    except Exception as e:
+        log.warning("No se pudo publicar el broadcast de turnos activos: %s", e)
 
 
 async def start_ws_bus_listener(manager, active_service_manager) -> None:
@@ -59,7 +74,7 @@ async def start_ws_bus_listener(manager, active_service_manager) -> None:
         try:
             pubsub = _get_redis().pubsub()
             await pubsub.subscribe(CHANNEL_SESSION, CHANNEL_BROADCAST)
-            print("[WS-Bus] Suscrito a Redis pub/sub")
+            log.info("Bus de WebSockets suscrito a Redis pub/sub")
             async for raw in pubsub.listen():
                 if raw.get("type") != "message":
                     continue
@@ -76,6 +91,5 @@ async def start_ws_bus_listener(manager, active_service_manager) -> None:
                 elif channel == CHANNEL_BROADCAST:
                     await active_service_manager.broadcast(data)
         except Exception as e:
-            print(f"[WS-Bus] Error en el listener, reintentando en 3s: {e}")
-            import asyncio
+            log.warning("Listener del bus de WebSockets caído, reintento en 3s: %s", e)
             await asyncio.sleep(3)

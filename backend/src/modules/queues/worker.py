@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from ...shared.leader_lock import try_acquire
 from ...shared.push import send_push
@@ -11,6 +12,8 @@ from .service import (
     get_turno_dias_en_servicio,
     get_turnos_a_notificar,
 )
+
+log = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = 60
 ACTIVE_SERVICE_POLL_SECONDS = 15
@@ -46,7 +49,7 @@ async def inactivity_worker():
             for c in cancelados:
                 codigo       = c["codigo"]
                 turno_dia_id = c["turno_dia_id"]
-                print(f"[Queue] Turno cancelado por inactividad: {codigo}")
+                log.info("Turno de %s cancelado por inactividad", codigo)
                 await publish_to_session(codigo, {
                     "type":    "cancelado",
                     "mensaje": "Tu turno fue cancelado por inactividad.",
@@ -64,7 +67,7 @@ async def inactivity_worker():
                     codigo     = llamado["codigo"]
                     numero     = llamado["numero_turno"]
                     push_token = llamado["push_token"]
-                    print(f"[Queue] Llamando turno #{numero} — alumno {codigo} — push_token: {push_token}")
+                    log.info("Llamando turno #%s (%s)", numero, codigo)
 
                     await publish_to_session(codigo, {
                         "type":    "llamado",
@@ -80,8 +83,9 @@ async def inactivity_worker():
                         "turno_dia_id": turno_dia_id,
                     }))
 
-        except Exception as e:
-            print(f"[Queue] Error en worker: {e}")
+        except Exception:
+            # Un ciclo fallido no mata al worker: se registra y el próximo ciclo reintenta.
+            log.exception("Falló un ciclo del worker de inactividad")
 
 
 async def active_service_worker():
@@ -104,5 +108,5 @@ async def active_service_worker():
             continue
         try:
             await publish_broadcast(active_service_payload())
-        except Exception as e:
-            print(f"[Queue] Error en active_service_worker: {e}")
+        except Exception:
+            log.exception("Falló un ciclo del worker de active-service")

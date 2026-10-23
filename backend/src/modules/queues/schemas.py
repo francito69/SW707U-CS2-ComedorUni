@@ -1,11 +1,18 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
 
+from ...shared.validacion import Sid, TipoTurno
+
 
 class JoinQueueRequest(BaseModel):
-    sid: str
-    tipo: str  # 'ALMUERZO' | 'CENA' | 'PRUEBA'
+    sid: Sid
+    tipo: TipoTurno
+
+
+class PushTokenRequest(BaseModel):
+    sid: Sid
+    push_token: str = Field(min_length=1, max_length=255)  # estudiantes.push_token es VARCHAR(255)
 
 
 class JoinQueueResponse(BaseModel):
@@ -27,7 +34,7 @@ class TurnoStatusResponse(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
-    sid: str
+    sid: Sid
 
 
 class ConfirmResponse(BaseModel):

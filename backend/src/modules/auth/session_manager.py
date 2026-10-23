@@ -1,4 +1,8 @@
+import logging
+
 from fastapi import WebSocket
+
+log = logging.getLogger(__name__)
 
 
 class SessionConnectionManager:
@@ -14,7 +18,7 @@ class SessionConnectionManager:
     async def connect(self, sid: str, ws: WebSocket) -> None:
         await ws.accept()
         self._by_sid[sid] = ws
-        print(f"[Session] {sid[:8]}… conectado — {len(self._by_sid)} sesión(es) activa(s)")
+        log.debug("Sesión %s… conectada, %d activas en este worker", sid[:8], len(self._by_sid))
 
     def disconnect(self, sid: str) -> None:
         self._by_sid.pop(sid, None)

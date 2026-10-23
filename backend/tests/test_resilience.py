@@ -1,149 +1,112 @@
 """
-Pruebas de Tolerancia a Fallas y Resiliencia — ComedorUNI
-Verifica mecanismos de recuperación, reconexión de brokers, idempotencia en consumidores
-y degradación elegante ante caídas de servicios externos.
-Rúbrica SW707: Criterio 'Tolerancia a fallas' (15%)
+Tolerancia a fallas (rúbrica: 15 %).
+
+1. Los consumers reintentan hasta que RabbitMQ responde, y avisan si se rinden.
+2. Publicar eventos es best-effort: RabbitMQ caído o colgado no hace fallar ni
+   colgar el request (el turno ya quedó en Postgres).
+3. Redis caído durante un aviso en tiempo real tampoco revierte la operación.
+4. M5 es idempotente ante la reentrega de un mensaje (at-least-once).
+5. Un ciclo fallido del worker de inactividad no lo mata.
 """
 import asyncio
-import unittest
-from unittest.mock import AsyncMock, patch
+import logging
+import time
+import uuid
+from unittest.mock import AsyncMock, Mock
+
+import psycopg2
+import pytest
+import redis
+
+from backend.src import main
+from backend.src.modules.queues import router, worker
+from backend.src.modules.tracking.service import registrar_encolamiento
+from backend.src.shared import rabbitmq, ws_bus
+
+SID = str(uuid.uuid4())
 
 
-class TestFaultToleranceAndResilience(unittest.TestCase):
-    """
-    Verificación de mecanismos de resiliencia según Resilient and Observable Systems (Sesión 5):
-    - Mecanismo 1: Reintentos con backoff al arrancar conexiones con el broker (RabbitMQ).
-    - Mecanismo 2: Idempotencia en el consumidor de eventos (M5 Tracking) ante reentregas.
-    - Mecanismo 3: Degradación elegante (fallo de Expo Push no revierte la reserva de turno).
-    - Mecanismo 4: Aislamiento de excepciones en tareas de fondo (inactivity worker).
-    """
+def test_consumers_reintentan_hasta_que_rabbitmq_responde(monkeypatch):
+    start_m4 = AsyncMock(side_effect=[ConnectionRefusedError(), ConnectionRefusedError(), None])
+    monkeypatch.setattr(main, "start_m4", start_m4)
+    monkeypatch.setattr(main, "start_m5", AsyncMock())
+    monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
 
-    def test_broker_reconnect_retry_loop_success_after_transient_failure(self):
-        """
-        Mecanismo de Resiliencia 1: Reintentos acotados al arranque de RabbitMQ.
-        Simula que el broker no está listo en el intento 1 y 2 (ConnectionRefused),
-        pero responde con éxito en el intento 3.
-        El backend debe reintentar y no abortar silenciosamente.
-        """
-        attempts = 0
-
-        async def mock_start_consumer():
-            nonlocal attempts
-            attempts += 1
-            if attempts < 3:
-                raise ConnectionError("Broker de RabbitMQ todavía no está escuchando en puerto 5672")
-            return "CONNECTED"
-
-        async def retry_startup_loop(max_attempts=5, delay=0.01):
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    res = await mock_start_consumer()
-                    return res, attempt
-                except ConnectionError:
-                    await asyncio.sleep(delay)
-            raise TimeoutError("Se agotaron los intentos de conexión")
-
-        loop = asyncio.new_event_loop()
-        try:
-            status, final_attempt = loop.run_until_complete(retry_startup_loop())
-            self.assertEqual(status, "CONNECTED")
-            self.assertEqual(final_attempt, 3)
-            self.assertEqual(attempts, 3)
-        finally:
-            loop.close()
-
-    def test_consumer_idempotency_prevents_duplicate_attendance(self):
-        """
-        Mecanismo de Resiliencia 2: Idempotencia ante duplicación de eventos de red.
-        En mensajería at-least-once, un mensaje 'turno.atendido' puede entregarse dos veces.
-        El consumidor debe procesar la segunda entrega de forma idempotente sin duplicar el registro.
-        """
-        attendance_db = set()  # Simula tabla con restricción UNIQUE(estudiante_id, turno_dia_id)
-
-        def idempotent_consumer_handler(estudiante_id: int, turno_dia_id: int, numero_turno: int):
-            clave_unica = (estudiante_id, turno_dia_id)
-            # Simula INSERT INTO ... ON CONFLICT (estudiante_id, turno_dia_id) DO NOTHING
-            if clave_unica in attendance_db:
-                # Evento duplicado detectado: se reconoce (ACK) sin duplicar datos
-                return {"status": "DUPLICADO_IGNORADO", "inserted": False}
-            attendance_db.add(clave_unica)
-            return {"status": "REGISTRADO", "inserted": True}
-
-        # Primera entrega del mensaje
-        res1 = idempotent_consumer_handler(estudiante_id=501, turno_dia_id=2, numero_turno=14)
-        self.assertEqual(res1["status"], "REGISTRADO")
-        self.assertTrue(res1["inserted"])
-
-        # Segunda entrega duplicada (por ejemplo, reintento de RabbitMQ tras pérdida transitoria de ACK)
-        res2 = idempotent_consumer_handler(estudiante_id=501, turno_dia_id=2, numero_turno=14)
-        self.assertEqual(res2["status"], "DUPLICADO_IGNORADO")
-        self.assertFalse(res2["inserted"])
-
-        # La base de datos solo conserva 1 registro único
-        self.assertEqual(len(attendance_db), 1)
-
-    def test_graceful_degradation_push_notification_outage(self):
-        """
-        Mecanismo de Resiliencia 3: Degradación elegante.
-        Si el servicio externo Expo Push Notification falla (timeout o 500 de exp.host),
-        la operación principal de asignar turno en el Comedor DEBE mantenerse exitosa.
-        El usuario obtiene su ticket y consultará su posición por WebSocket o HTTP status.
-        """
-        def join_queue_with_resilient_push(push_available: bool):
-            # 1. Transacción nuclear de negocio (PostgreSQL)
-            ticket_id = 99
-            numero_turno = 42
-
-            # 2. Despacho de notificación externa (degradable)
-            push_sent = False
-            try:
-                if not push_available:
-                    raise TimeoutError("Conexión con Expo Push Service exp.host agotó el tiempo de espera")
-                push_sent = True
-            except TimeoutError:
-                # Degradación: registra advertencia, no aborta la transacción principal
-                push_sent = False
-
-            return {
-                "ticket_id": ticket_id,
-                "numero_turno": numero_turno,
-                "push_dispatched": push_sent,
-                "success": True,
-            }
-
-        # Cuando el proveedor push está caído
-        res = join_queue_with_resilient_push(push_available=False)
-        self.assertTrue(res["success"], "La reserva debe ser exitosa a pesar de la caída de push")
-        self.assertEqual(res["numero_turno"], 42)
-        self.assertFalse(res["push_dispatched"])
-
-    def test_worker_iteration_fault_isolation(self):
-        """
-        Mecanismo de Resiliencia 4: Aislamiento de excepciones en tareas de fondo.
-        Si un mensaje o turno en la lista de inactividad contiene un valor nulo inesperado,
-        el worker no debe colapsar por completo; debe aislar el registro fallido y procesar los demás.
-        """
-        turnos_procesados = []
-        turnos_a_procesar = [
-            {"codigo": "20210001A", "turno": 1},
-            {"codigo": None, "turno": 2},  # Mensaje corrupto
-            {"codigo": "20210003C", "turno": 3},
-        ]
-
-        def process_turnos_safely(items):
-            for item in items:
-                try:
-                    if not item.get("codigo"):
-                        raise ValueError("Payload corrupto: código ausente")
-                    turnos_procesados.append(item["codigo"])
-                except Exception:
-                    # Aislamiento: continuar con la siguiente iteración
-                    continue
-
-        process_turnos_safely(turnos_a_procesar)
-        # Los turnos 1 y 3 se procesaron exitosamente a pesar de la falla del turno 2
-        self.assertEqual(turnos_procesados, ["20210001A", "20210003C"])
+    assert asyncio.run(main._start_consumers_with_retry(max_attempts=5, delay=0)) is True
+    assert start_m4.await_count == 3
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_consumers_se_rinden_y_lo_registran_como_error(monkeypatch, caplog):
+    monkeypatch.setattr(main, "start_m4", AsyncMock(side_effect=ConnectionRefusedError()))
+    monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
+
+    with caplog.at_level(logging.WARNING):
+        assert asyncio.run(main._start_consumers_with_retry(max_attempts=3, delay=0)) is False
+    assert any(r.levelno == logging.ERROR and "consumers" in r.getMessage() for r in caplog.records)
+
+
+def test_publish_no_propaga_la_caida_de_rabbitmq(monkeypatch, caplog):
+    monkeypatch.setattr(rabbitmq, "get_connection", AsyncMock(side_effect=ConnectionRefusedError("5672")))
+    monkeypatch.setattr(rabbitmq, "_publish_channel", None)
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(rabbitmq.publish("turno.encolado", {"evento": "turno.encolado"}))
+    assert "turno.encolado" in caplog.text
+
+
+def test_publish_no_cuelga_el_request_si_rabbitmq_no_responde(monkeypatch):
+    async def colgado(*_):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(rabbitmq, "_publicar", colgado)
+    monkeypatch.setattr(rabbitmq, "PUBLISH_TIMEOUT_SECONDS", 0.2)
+
+    inicio = time.monotonic()
+    asyncio.run(rabbitmq.publish("turno.encolado", {}))
+    assert time.monotonic() - inicio < 2
+
+
+def test_confirmar_responde_aunque_rabbitmq_y_redis_esten_caidos(client, monkeypatch):
+    monkeypatch.setattr(router, "_confirmar_presencia", lambda sid: {
+        "codigo": "20224085D",
+        "turno": {"turno_dia_id": 1, "numero_turno": 4, "tipo": "ALMUERZO"},
+        "nuevo_estado": "ATENDIDO",
+        "estudiante_id": 10,
+        "siguientes": [{"codigo": "20231172F", "numero_turno": 5, "push_token": None}],
+        "turno_asignado": 1,
+    })
+    monkeypatch.setattr(rabbitmq, "get_connection", AsyncMock(side_effect=ConnectionRefusedError()))
+    monkeypatch.setattr(rabbitmq, "_publish_channel", None)
+    redis_caido = Mock()
+    redis_caido.publish = AsyncMock(side_effect=redis.exceptions.ConnectionError("6379"))
+    monkeypatch.setattr(ws_bus, "_get_redis", lambda: redis_caido)
+
+    r = client.post("/queue/confirm", json={"sid": SID})
+
+    assert r.status_code == 200
+    assert r.json()["estado"] == "ATENDIDO"
+    assert redis_caido.publish.await_count == 1  # se intentó avisar al siguiente
+
+
+def test_m5_es_idempotente_ante_reentrega(pg, turno_dia_prueba, estudiantes):
+    (estudiante,) = estudiantes(1)
+    for _ in range(3):  # el broker puede reentregar el mismo evento
+        registrar_encolamiento(estudiante, turno_dia_prueba, 1, "ALMUERZO")
+    with pg.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM historial_encolamiento WHERE turno_dia_id = %s",
+                    (turno_dia_prueba,))
+        assert cur.fetchone()[0] == 1
+
+
+def test_worker_de_inactividad_sobrevive_a_un_ciclo_fallido(monkeypatch):
+    # Tercer sleep = fin de la prueba: corta el bucle infinito.
+    monkeypatch.setattr(worker.asyncio, "sleep", AsyncMock(side_effect=[None, None, asyncio.CancelledError()]))
+    monkeypatch.setattr(worker, "try_acquire", AsyncMock(return_value=True))
+    a_notificar = Mock(side_effect=[psycopg2.OperationalError("db caída"), []])
+    monkeypatch.setattr(worker, "get_turnos_a_notificar", a_notificar)
+    monkeypatch.setattr(worker, "cancelar_inactivos", Mock(return_value=[]))
+    monkeypatch.setattr(worker, "get_turno_dias_en_servicio", Mock(return_value=[]))
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(worker.inactivity_worker())
+    assert a_notificar.call_count == 2  # el segundo ciclo corrió tras el fallo del primero

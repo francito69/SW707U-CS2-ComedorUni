@@ -97,7 +97,7 @@ PANTALLA 2: Sincronización de Identidad y Créditos (Ruta: /sync)
 - Estado de carga y confirmación de datos extraídos del scraping del portal estudiantil.
 - Tarjeta de identidad del estudiante con foto de carné simulada, código "20210001A", nombres "Franz Joe Inga Champi", carrera "Ingeniería de Software".
 - Indicadores en píldoras: "Matrícula Regular 2026-II" (Verde), "22 Créditos" (Azul).
-- Indicador de seguridad: "Sesión activa (Token sid con TTL de 24 horas en Redis)".
+- Indicador de seguridad: "Sesión activa (Token sid con TTL de 8 horas en Redis)".
 - Botón primario: "Continuar a Verificación Biométrica".
 
 PANTALLA 3: Verificación Facial 1:1 (Ruta: /verify-biometric)

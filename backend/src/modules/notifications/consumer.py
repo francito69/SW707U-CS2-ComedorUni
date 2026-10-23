@@ -1,9 +1,12 @@
 import json
+import logging
 
 import aio_pika
 
 from ...shared.push import send_push
 from ...shared.rabbitmq import start_consumer
+
+log = logging.getLogger(__name__)
 
 QUEUE_NAME   = "m4.notificaciones"
 ROUTING_KEYS = ["turno.llamado", "turno.cancelado"]
@@ -22,9 +25,9 @@ async def _handle(message: aio_pika.IncomingMessage) -> None:
             push_token = payload.get("push_token")
             numero     = payload.get("numero_turno")
 
-            print(f"[M4] Mensaje recibido: evento={evento}, push_token={push_token}, numero={numero}")
+            log.debug("M4 recibió evento=%s numero=%s", evento, numero)
             if not push_token or not evento:
-                print(f"[M4] Descartando — falta push_token o evento")
+                log.info("M4 descarta evento=%s: falta push_token o evento", evento)
                 return
 
             title, body = MENSAJES.get(evento, ("Comedor UNI", "Tienes una notificación"))
@@ -37,8 +40,10 @@ async def _handle(message: aio_pika.IncomingMessage) -> None:
                 body=body,
                 data={"type": evento.split(".")[1], "turno": numero},
             )
-        except Exception as e:
-            print(f"[M4] Error procesando mensaje: {e}")
+        except Exception:
+            # Se confirma el mensaje igual (message.process): una push perdida no
+            # debe reintentarse en bucle ni frenar a los demás estudiantes.
+            log.exception("M4 no pudo procesar el mensaje")
 
 
 async def start() -> None:
