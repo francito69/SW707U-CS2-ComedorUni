@@ -102,11 +102,10 @@ def test_worker_de_inactividad_sobrevive_a_un_ciclo_fallido(monkeypatch):
     # Tercer sleep = fin de la prueba: corta el bucle infinito.
     monkeypatch.setattr(worker.asyncio, "sleep", AsyncMock(side_effect=[None, None, asyncio.CancelledError()]))
     monkeypatch.setattr(worker, "try_acquire", AsyncMock(return_value=True))
-    a_notificar = Mock(side_effect=[psycopg2.OperationalError("db caída"), []])
-    monkeypatch.setattr(worker, "get_turnos_a_notificar", a_notificar)
-    monkeypatch.setattr(worker, "cancelar_inactivos", Mock(return_value=[]))
+    cancelar = Mock(side_effect=[psycopg2.OperationalError("db caída"), []])
+    monkeypatch.setattr(worker, "cancelar_inactivos", cancelar)
     monkeypatch.setattr(worker, "get_turno_dias_en_servicio", Mock(return_value=[]))
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(worker.inactivity_worker())
-    assert a_notificar.call_count == 2  # el segundo ciclo corrió tras el fallo del primero
+    assert cancelar.call_count == 2  # el segundo ciclo corrió tras el fallo del primero

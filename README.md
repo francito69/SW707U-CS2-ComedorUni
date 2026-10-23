@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](https://www.postgresql.org/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3-FF6600?logo=rabbitmq)](https://www.rabbitmq.com/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis)](https://redis.io/)
-[![Tests](https://img.shields.io/badge/Tests-69%20Passed-success?logo=pytest)](docs/DocumentoTecnicoParcial.md#10-pruebas-automatizadas-y-evidencias)
+[![Tests](https://img.shields.io/badge/Tests-76%20Passed-success?logo=pytest)](docs/DocumentoTecnicoParcial.md#10-pruebas-automatizadas-y-evidencias)
 [![SW707](https://img.shields.io/badge/SW707-Examen%20Parcial%20v1.0-blueviolet)](docs/DocumentoTecnicoParcial.md)
 
 **ComedorUNI** es una plataforma distribuida y reactiva para la gestión inteligente de colas virtuales en el Comedor Universitario de la **Universidad Nacional de Ingeniería (UNI)**. Elimina las colas físicas a la intemperie mediante un flujo móvil sincronizado en tiempo real, respaldado por una arquitectura de microservicios de infraestructura resiliente, asíncrona y transaccionalmente segura.
@@ -35,7 +35,7 @@ El sistema implementa un **Monolito Modular Asíncrono** respaldado por contened
 - **Broker de Mensajería:** RabbitMQ 3; Topic Exchange `comedor` con colas durables para desacoplar asíncronamente:
   - **M4 (Notificaciones Push):** Consume `turno.llamado` y `turno.cancelado` y despacha a Expo Push Service.
   - **M5 (Seguimiento):** Consume `turno.encolado` y `turno.atendido` e inserta trazabilidad histórica de forma idempotente en PostgreSQL.
-- **Worker Autónomo de Inactividad:** Tarea asíncrona periódica (cada 60s) que cancela turnos no confirmados en 3 minutos y dispara la reasignación automática en grupos (`batch_size = raciones_max / 10`).
+- **Worker Autónomo de Inactividad:** Tarea asíncrona periódica (cada 60s) que cancela a quien no confirmó dentro de los 3 minutos desde que lo llamaron y llena los cupos libres con las siguientes personas de la cola (máximo `raciones_max / 10` llamadas a la vez). Quien no confirma no frena la cola.
 
 ---
 
@@ -50,7 +50,7 @@ El sistema implementa un **Monolito Modular Asíncrono** respaldado por contened
 | **Manejo de errores y excepciones** | **15%** | Errores de dominio → 4xx con `codigo`; PostgreSQL/Redis caídos → 503 sin filtrar detalles; inesperados → 500 registrado una sola vez. | `test_errors_and_exceptions.py` (14 pruebas) |
 | **Concurrencia** | **15%** | Conteo de raciones dentro de `SELECT ... FOR UPDATE`, sobreventa reproducida contra PostgreSQL real y prueba de carga con Locust (2000 usuarios). | `test_concurrency.py` (5 pruebas) + `tests/carga/` |
 | **Tolerancia a fallas** | **15%** | Reintentos de consumers, publicación best-effort con timeout, avisos en tiempo real que no revierten la operación, idempotencia de M5, worker que sobrevive a ciclos fallidos. | `test_resilience.py` (7 pruebas) |
-| **Pruebas y evidencias** | **5%** | 69 pruebas con `pytest` sobre el código real (7 de integración contra PostgreSQL) y prueba de carga reproducible. | `backend/tests/` |
+| **Pruebas y evidencias** | **5%** | 76 pruebas con `pytest` sobre el código real (13 de integración contra PostgreSQL) y prueba de carga reproducible. | `backend/tests/` |
 | **Calidad de código y documentación** | **5%** | Documento técnico de 11 capítulos alineado con el código, guion de exposición, arquitectura C4 y bitácora de IA. | [docs/](docs/README.md) |
 
 ---
@@ -78,11 +78,11 @@ docker compose -f backend\docker-compose.yml up -d postgres redis rabbitmq
 ### 2. Ejecutar la Suite de Pruebas Automatizadas
 Con el entorno del backend creado (paso 3) e instaladas las dependencias de desarrollo (`pip install -r backend/requirements-dev.txt`), desde la raíz:
 ```powershell
-# Base de pruebas aislada (puerto 5434, datos en memoria) para las 7 pruebas de integración
+# Base de pruebas aislada (puerto 5434, datos en memoria) para las 13 pruebas de integración
 docker compose -f backend/tests/carga/docker-compose.carga.yml up -d postgres
 python -m pytest backend/tests
 ```
-*Salida esperada:* `69 passed`. Sin esa base, las 7 de integración se saltan (`62 passed, 7 skipped`).
+*Salida esperada:* `76 passed`. Sin esa base, las 13 de integración se saltan (`63 passed, 13 skipped`).
 
 La prueba de carga con Locust está en [`backend/tests/carga/`](backend/tests/carga/README.md).
 

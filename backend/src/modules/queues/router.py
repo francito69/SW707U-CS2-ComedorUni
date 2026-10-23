@@ -28,7 +28,6 @@ from .schemas import (
 )
 from .service import (
     active_service_payload,
-    calcular_turno_asignado,
     cancelar_turno,
     confirmar_turno,
     get_raciones_max_turno_dia,
@@ -42,6 +41,7 @@ from .service import (
     posicion_en_cola,
     raciones_usadas,
     save_push_token,
+    turno_asignado_de,
     turno_existente,
 )
 
@@ -169,7 +169,7 @@ def queue_status(sid: str = Query(pattern=UUID4_PATTERN)):
     turno_dia_id  = turno["turno_dia_id"]
     raciones_max  = get_raciones_max_turno_dia(turno_dia_id)
     turno_asignado = (
-        calcular_turno_asignado(turno["numero_turno"], raciones_max)
+        turno_asignado_de(turno["id"], raciones_max)
         if turno["estado"] == "ATENDIDO" else None
     )
     return TurnoStatusResponse(
@@ -200,9 +200,7 @@ def _confirmar_presencia(sid: str) -> dict:
     if nuevo_estado == "ATENDIDO":
         estudiante_id = get_estudiante_id(codigo)
         siguientes = llamar_siguiente(turno_dia_id)
-        turno_asignado = calcular_turno_asignado(
-            turno["numero_turno"], get_raciones_max_turno_dia(turno_dia_id)
-        )
+        turno_asignado = turno_asignado_de(turno["id"], get_raciones_max_turno_dia(turno_dia_id))
     return {
         "codigo": codigo, "turno": turno, "nuevo_estado": nuevo_estado,
         "estudiante_id": estudiante_id, "siguientes": siguientes,
@@ -239,18 +237,28 @@ async def confirm_presence(data: ConfirmRequest = Body(...)):
     )
 
 
-@router.post("/leave")
-def leave_queue(data: ConfirmRequest = Body(...)):
-    codigo = _require_session(data.sid)["codigo"]
+def _salir_de_la_cola(sid: str) -> dict:
+    """Parte síncrona de /leave. Corre en el threadpool."""
+    codigo = _require_session(sid)["codigo"]
 
     turno = get_turno_activo_por_codigo(codigo)
     if not turno:
-        return {"status": "ok", "mensaje": "No había turno activo"}
+        return {"mensaje": "No había turno activo", "siguientes": [], "turno": None}
     if turno["estado"] in ("ATENDIDO", "CANCELADO"):
-        return {"status": "ok", "mensaje": "Turno ya finalizado"}
+        return {"mensaje": "Turno ya finalizado", "siguientes": [], "turno": None}
 
     cancelar_turno(turno["id"])
-    return {"status": "ok", "mensaje": "Saliste de la cola"}
+    # Si ya lo habían llamado, su cupo pasa de inmediato a la siguiente persona.
+    siguientes = llamar_siguiente(turno["turno_dia_id"]) if turno["estado"] == "LLAMADO" else []
+    return {"mensaje": "Saliste de la cola", "siguientes": siguientes, "turno": turno}
+
+
+@router.post("/leave")
+async def leave_queue(data: ConfirmRequest = Body(...)):
+    r = await run_in_threadpool(_salir_de_la_cola, data.sid)
+    if r["siguientes"]:
+        await _avisar_llamados(r["siguientes"], r["turno"]["tipo"], r["turno"]["turno_dia_id"])
+    return {"status": "ok", "mensaje": r["mensaje"]}
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────────

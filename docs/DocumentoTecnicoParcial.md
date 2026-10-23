@@ -67,7 +67,7 @@ La Etapa I del proyecto establece la **línea base verificable y robusta** del s
 - ✅ **Consumidores Especializados:**
   - **Módulo M4 (Notificaciones):** Escucha `turno.llamado` y `turno.cancelado` y despacha notificaciones push a través de Expo Push Service.
   - **Módulo M5 (Seguimiento):** Escucha `turno.encolado` y `turno.atendido` y registra la trazabilidad histórica de asistencia de forma idempotente en PostgreSQL.
-- ✅ **Worker Autónomo de Inactividad:** Tarea asíncrona en segundo plano que inspecciona cada 60s los turnos llamados sin confirmación (timeout de 3 minutos), los cancela automáticamente y dispara la reasignación en grupos (`batch_size = raciones_max / 10`).
+- ✅ **Worker Autónomo de Inactividad:** Tarea asíncrona que cada 60 s cancela a quien no confirmó dentro de los 3 minutos desde que lo llamaron y llena los cupos libres con las siguientes personas de la cola (máximo `raciones_max / 10` llamadas a la vez). Quien no confirma no frena la cola: puede confirmar hasta que vence su plazo, pero sin recuperar su lugar (su grupo de comedor se asigna según el orden en que confirma).
 
 ### 2.2 Requisitos No Funcionales y Restricciones
 - **Integridad Referencial y Unicidad:** Imposibilidad física de que un alumno obtenga dos turnos activos para el mismo servicio, respaldado por índices condicionales únicos en base de datos.
@@ -243,9 +243,9 @@ Si una postcondición falla, la transacción no se confirma.
 | Operación | Precondiciones (si fallan → respuesta) | Postcondiciones | Invariantes |
 |---|---|---|---|
 | **`POST /queue/join`** | `sid` UUID v4 y `tipo` ∈ {ALMUERZO, CENA, PRUEBA} → 422 · sesión activa → 401 `sesion_invalida` · turno de ese tipo abierto ahora → 400 `turno_no_activo` · estudiante registrado → 404 `estudiante_no_registrado` · turno del día habilitado → 409 `turno_no_habilitado` · sin turno activo → 409 `turno_duplicado` · quedan raciones → 400 `sin_raciones` | Turno `ESPERANDO` con número = máximo previo + 1; la respuesta incluye `raciones_restantes`; se publica `turno.encolado` (best-effort). | Turnos activos ≤ `raciones_max`. Un solo turno activo por estudiante y servicio. |
-| **`POST /queue/confirm`** | Sesión activa → 401 · tiene turno activo → 404 `sin_turno_activo` · el turno no está `ATENDIDO` ni `CANCELADO` → 400 `turno_finalizado` | Si estaba `LLAMADO`: pasa a `ATENDIDO`, se fija `confirmado_at`, se publica `turno.atendido` y se llama al siguiente grupo. Si estaba `ESPERANDO`: solo renueva `ultimo_ping` ("Sigo aquí") y responde `ESPERANDO`. | `ATENDIDO` y `CANCELADO` son estados finales. |
+| **`POST /queue/confirm`** | Sesión activa → 401 · tiene turno activo → 404 `sin_turno_activo` · el turno no está `ATENDIDO` ni `CANCELADO` → 400 `turno_finalizado` | Si estaba `LLAMADO`: pasa a `ATENDIDO`, se fija `confirmado_at`, se publica `turno.atendido` y su cupo pasa a la siguiente persona de la cola. Si estaba `ESPERANDO`: solo renueva `ultimo_ping` ("Sigo aquí") y responde `ESPERANDO`. | `ATENDIDO` y `CANCELADO` son estados finales. |
 | **`POST /queue/leave`** | Sesión activa → 401 | `ESPERANDO`/`LLAMADO` pasa a `CANCELADO` y libera la ración. Idempotente: sin turno o con turno terminado responde 200 sin cambios. | Un turno `ATENDIDO` nunca se cancela. |
-| **`GET /queue/status`** | `sid` UUID v4 → 422 · sesión → 401 · turno hoy → 404 | Estado, posición y turno en atención; grupo asignado solo si está `ATENDIDO`. | Grupo asignado entre 1 y 10. |
+| **`GET /queue/status`** | `sid` UUID v4 → 422 · sesión → 401 · turno hoy → 404 | Estado, posición y turno en atención; grupo de comedor solo si está `ATENDIDO`, calculado por el orden en que confirmó (no por su número de cola). | Grupo asignado entre 1 y 10; confirmar tarde no mueve el grupo de nadie. |
 | **`POST /parse-data`** | HTML ≤ 5 MB por campo → 422 · código UNI válido en el HTML → 422 `datos_portal_invalidos` | Estudiante registrado o actualizado y sesión creada en Redis (8 h). | Un código UNI identifica a un solo estudiante. |
 
 ### 6.3 Barricadas de programación defensiva
@@ -343,6 +343,7 @@ El router mantiene los chequeos rápidos sin candado (turno existente, raciones 
 ### 8.3 Concurrencia entre hilos y procesos
 - **Pool de conexiones:** inicialización con *double-checked locking* (sin ella, dos hilos al arrancar creaban dos pools distintos y perdían conexiones) y semáforo para esperar conexión (sección 5.3).
 - **Event loop:** la base de datos corre en el threadpool (sección 5.5).
+- **Llamado de turnos:** la cola avanza persona por persona, con como máximo `raciones_max / 10` personas `LLAMADO` a la vez. Cada confirmación, salida o vencimiento libera un cupo y se llama a la siguiente persona en orden. `llamar_siguiente` toma el mismo candado `FOR UPDATE` del turno del día, para que dos confirmaciones simultáneas no calculen los mismos cupos libres y llamen de más (`test_llamadas_simultaneas_no_superan_los_cupos`).
 - **Varios procesos (6 workers):** cada worker tiene sus propias conexiones WebSocket en memoria. Los avisos pasan por Redis Pub/Sub (`shared/ws_bus.py`) para llegar al estudiante esté en el worker que esté. Las tareas periódicas usan un lock de líder en Redis (`SET NX EX`, `shared/leader_lock.py`), para que el worker de inactividad corra una sola vez por ciclo y no seis.
 
 ### 8.4 Evidencia bajo carga real (Locust)
@@ -376,6 +377,7 @@ En **todas** las corridas la base quedó consistente: ningún número de turno r
 | Reentrega de un mensaje (*at-least-once*) | M5 inserta con `ON CONFLICT DO NOTHING`: el historial no se duplica. | `test_m5_es_idempotente_ante_reentrega` |
 | Expo Push caído | Se registra `WARNING`; el turno sigue válido y la app lo ve por WebSocket. | Revisión de `shared/push.py` |
 | Falla un ciclo del worker de inactividad | Se registra el error y el siguiente ciclo corre normalmente. | `test_worker_de_inactividad_sobrevive_a_un_ciclo_fallido` |
+| Un estudiante llamado no aparece (se quedó dormido) | La cola no lo espera: los demás siguen confirmando y se llama a las siguientes personas por los otros cupos. Puede confirmar hasta 3 min después de su llamado, pero no recupera su lugar: entra al grupo que se atiende en ese momento, sin mover a quienes ya confirmaron. Pasado el plazo se cancela, aunque la app siga mandando pings. | `test_el_que_no_confirma_no_frena_la_cola`, `test_quien_confirma_tarde_entra_al_grupo_del_momento_sin_mover_a_nadie`, `test_a_los_3_minutos_se_cancela_aunque_la_app_mande_pings` |
 | Muere el worker que tenía el lock de líder | El lock expira (TTL de 55 s) y otro worker toma el ciclo siguiente. | Diseño de `shared/leader_lock.py` |
 
 ---
@@ -394,13 +396,13 @@ docker compose -f backend/tests/carga/docker-compose.carga.yml up -d postgres
 python -m pytest backend/tests
 ```
 
-Sin la base de pruebas, las 7 pruebas de integración se saltan y muestran el comando para levantarla. Ninguna prueba usa la base de desarrollo: cada una crea su propio turno y sus estudiantes, y los borra al terminar.
+Sin la base de pruebas, las 13 pruebas de integración se saltan y muestran el comando para levantarla. Ninguna prueba usa la base de desarrollo: cada una crea su propio turno y sus estudiantes, y los borra al terminar.
 
 ### 10.2 Resultado
 
 ```text
-69 passed in 2.02s          (con PostgreSQL de pruebas levantado)
-62 passed, 7 skipped        (sin infraestructura)
+76 passed in 2.59s          (con PostgreSQL de pruebas levantado)
+63 passed, 13 skipped       (sin infraestructura)
 ```
 
 ### 10.3 Pruebas por criterio de la rúbrica
@@ -413,6 +415,7 @@ Todas las pruebas ejercitan el código real del sistema (endpoints con `TestClie
 | `test_errors_and_exceptions.py` | 14 | Errores y excepciones | Cada error de negocio con su 4xx y `codigo`; 503 sin filtrar detalles ante PostgreSQL, pool o Redis caídos; 500 genérico registrado una sola vez; `request_id` en la respuesta y en el log. |
 | `test_concurrency.py` | 5 | Concurrencia | Reproducción de la sobreventa; 40 hilos por 10 raciones dan exactamente 10 turnos (1 a 10); un estudiante en paralelo obtiene un solo turno; el pool espera en vez de fallar. |
 | `test_resilience.py` | 7 | Tolerancia a fallas | Reintentos de consumers; RabbitMQ caído o colgado; Redis caído en un aviso; idempotencia de M5; worker que sobrevive a un ciclo fallido. |
+| `test_reasignacion.py` | 7 | Concurrencia y tolerancia a fallas | Llamado en orden hasta llenar los cupos; quien no confirma no frena la cola y puede confirmar dentro de su plazo; quien confirma tarde entra al grupo del momento sin mover a nadie; vencimiento a los 3 min desde el llamado aunque haya pings; llamadas simultáneas sin exceder cupos; al salir un llamado se llama al siguiente. |
 | `test_asignar_turno.py`, `test_caracterizacion_queues.py` | 5 | Pruebas y evidencias | Caso de uso `AsignarTurno` con repositorio en memoria y caracterización de `calcular_turno_asignado`. |
 
 **Prueba de carga:** `backend/tests/carga/` (Locust, con instrucciones en su `README.md`). Resultados en la sección 8.4.

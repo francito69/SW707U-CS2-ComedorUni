@@ -11,7 +11,7 @@ from ...shared.errores import SinRaciones, TurnoDuplicado
 
 log = logging.getLogger(__name__)
 
-PING_TIMEOUT_SECONDS = 180  # 3 minutos
+TOLERANCIA_LLAMADO_SECONDS = 180  # plazo para confirmar desde que te llaman
 LIMA_TZ = ZoneInfo("America/Lima")
 
 
@@ -256,10 +256,39 @@ def turno_existente(estudiante_id: int, turno_dia_id: int) -> Optional[dict]:
 
 import math
 
-def calcular_turno_asignado(numero_turno: int, raciones_max: int) -> int:
-    """Turno grupo al que pertenece una posición dada (1–10)."""
+def calcular_turno_asignado(posicion: int, raciones_max: int) -> int:
+    """Turno grupo (1–10) que corresponde a una posición de llegada."""
     batch_size = max(1, math.ceil(raciones_max / 10))
-    return math.ceil(numero_turno / batch_size)
+    return math.ceil(posicion / batch_size)
+
+
+def turno_asignado_de(turno_id: int, raciones_max: int, conn=None) -> int:
+    """
+    Grupo de comedor de un turno ATENDIDO según el ORDEN EN QUE CONFIRMÓ, no su
+    número de cola: quien confirma tarde (lo pasaron mientras no respondía)
+    entra al grupo que se está atendiendo en ese momento, sin recuperar su
+    lugar original ni desplazar a quienes ya confirmaron.
+    """
+    _conn = conn or get_db_conn()
+    try:
+        with _conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM turnos t
+                JOIN turnos yo ON yo.id = %s
+                WHERE t.turno_dia_id = yo.turno_dia_id
+                  AND t.estado = 'ATENDIDO'
+                  AND (t.confirmado_at, t.id) <= (yo.confirmado_at, yo.id)
+                """,
+                (turno_id,),
+            )
+            orden = cur.fetchone()[0]
+        requiere(orden >= 1, f"el turno {turno_id} está ATENDIDO")
+        return calcular_turno_asignado(orden, raciones_max)
+    finally:
+        if conn is None:
+            _conn.close()
 
 
 def get_raciones_max_turno_dia(turno_dia_id: int) -> int:
@@ -467,42 +496,13 @@ def get_turno_hoy_por_codigo(codigo: str) -> Optional[dict]:
         conn.close()
 
 
-def get_turnos_a_notificar() -> list[dict]:
+def cancelar_inactivos() -> list[dict]:
     """
-    Turnos LLAMADO sin ping en los últimos 3 min.
-    Solo se notifica a quien ya fue llamado (necesita confirmar su presencia).
-    Los tickets ESPERANDO no requieren ping activo.
-    """
-    conn = get_db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT t.id, t.estado, e.codigo, e.push_token, t.numero_turno
-                FROM turnos t
-                JOIN estudiantes e ON e.id = t.estudiante_id
-                JOIN turno_dia td ON td.id = t.turno_dia_id
-                WHERE t.estado = 'LLAMADO'
-                  AND t.ultimo_ping < NOW() - INTERVAL '3 minutes'
-                  AND td.fecha = %s
-                """,
-                (fecha_lima(),)
-            )
-            return [
-                {"id": r[0], "estado": r[1], "codigo": r[2],
-                 "push_token": r[3], "numero_turno": r[4]}
-                for r in cur.fetchall()
-            ]
-    finally:
-        conn.close()
-
-
-def cancelar_inactivos() -> list[str]:
-    """
-    Cancela solo turnos LLAMADO sin respuesta en 3 min.
-    Los tickets ESPERANDO no se cancelan automáticamente: el usuario
-    puede tener el app en segundo plano y su lugar en la cola se mantiene
-    hasta que sea su turno.
+    Cancela los turnos LLAMADO que no confirmaron dentro de los 3 minutos
+    contados desde que fueron llamados. El plazo es fijo: los pings de la app
+    no lo extienden (solo "Confirmar presencia" salva el turno).
+    Los turnos ESPERANDO no se cancelan: su lugar se mantiene aunque la app
+    esté en segundo plano.
     """
     conn = get_db_conn()
     try:
@@ -513,9 +513,10 @@ def cancelar_inactivos() -> list[str]:
                 FROM estudiantes e
                 WHERE t.estudiante_id = e.id
                   AND t.estado = 'LLAMADO'
-                  AND t.ultimo_ping < NOW() - INTERVAL '3 minutes'
+                  AND t.llamado_at < NOW() - make_interval(secs => %s)
                 RETURNING e.codigo, t.turno_dia_id, e.push_token
-                """
+                """,
+                (TOLERANCIA_LLAMADO_SECONDS,),
             )
             rows = cur.fetchall()
         conn.commit()

@@ -372,20 +372,23 @@ SQL sigue siendo la fuente del estado.
 
 - Estados observados: `ESPERANDO`, `LLAMADO`, `ATENDIDO`, `CANCELADO`.
 - Ticket solicita estado inicial y abre `/queue/ws/{sid}`.
-- `manager` es local al proceso.
-- Worker se despierta cada 60 s y procesa pings, cancelaciones y siguiente grupo.
-- `llamar_siguiente` elige grupo según `ceil(raciones_max / 10)`.
-- WebSocket no es un bus entre varias réplicas.
+- `manager` es local a cada proceso; los avisos viajan entre procesos por Redis Pub/Sub (`shared/ws_bus.py`).
+- Worker se despierta cada 60 s, cancela a quien no confirmó en 3 min desde su llamado y llena los cupos libres.
+- `llamar_siguiente`: como máximo `ceil(raciones_max / 10)` personas `LLAMADO` a la vez; la cola avanza persona por persona.
+- Quien no confirma no frena la cola; si confirma dentro de sus 3 minutos, entra al grupo que se atiende en ese momento (no recupera su lugar).
 
 **Qué decir**
 
 “El ticket establece WebSocket y traduce mensajes a UI. El backend verifica el `sid`
-y asocia la conexión en memoria. El worker corre cada minuto: detecta falta de
-respuesta, cancela llamados vencidos y llama al siguiente grupo. `llamar_siguiente`
-usa una operación SQL para actualizar de ESPERANDO a LLAMADO. Al confirmar, la UI
-actualiza estado y libera siguiente grupo. Si se escala a dos procesos, cada uno
-tendría su propio manager; actualmente no hay Redis Pub/Sub ni mecanismo distribuido
-en ese código.”
+y asocia la conexión en memoria del proceso; como corremos 6 procesos, los avisos se
+publican en Redis Pub/Sub y los entrega el proceso que tiene la conexión. La cola
+avanza persona por persona: hay un número fijo de cupos de llamado y cada vez que
+alguien confirma, sale o vence, se llama a la siguiente persona. Si alguien llamado
+no aparece, no frena a nadie: los demás siguen pasando, y esa persona puede confirmar
+hasta 3 minutos después de su llamado, pero sin recuperar su lugar: su grupo de comedor
+se asigna según el orden en que confirma, así no se redistribuye a nadie. Pasado ese plazo el worker lo cancela, aunque
+la app siga abierta mandando pings. `llamar_siguiente` toma el mismo candado del turno
+del día, así dos confirmaciones simultáneas no llaman de más.”
 
 **Código a abrir**
 
@@ -393,7 +396,8 @@ en ese código.”
   `:130` — confirmar.
 - `backend/src/modules/queues/router.py:241` — WebSocket servidor.
 - `backend/src/modules/queues/worker.py:21` — worker.
-- `backend/src/modules/reassignment/service.py:7` — siguiente grupo.
+- `backend/src/modules/reassignment/service.py:6` — llamado por cupos.
+- `backend/src/modules/queues/service.py` — `cancelar_inactivos` (plazo desde `llamado_at`).
 
 ### Diapositiva 12 | Errores, eventos y resiliencia real | 2:30 | Parte II
 

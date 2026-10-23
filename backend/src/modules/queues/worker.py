@@ -10,7 +10,6 @@ from .service import (
     active_service_payload,
     cancelar_inactivos,
     get_turno_dias_en_servicio,
-    get_turnos_a_notificar,
 )
 
 log = logging.getLogger(__name__)
@@ -35,16 +34,7 @@ async def inactivity_worker():
         if not await try_acquire("inactivity_worker", INTERVAL_SECONDS - 5):
             continue
         try:
-            # ── Ping a los que llevan 3 min sin responder ──────────────────
-            for t in get_turnos_a_notificar():
-                await publish_to_session(t["codigo"], {
-                    "type":    "ping_request",
-                    "mensaje": "¿Sigues en la cola? Confirma tu presencia.",
-                    "turno":   t["numero_turno"],
-                })
-                # Push se delega a M4 vía RabbitMQ (turno.llamado ya lo publicó antes)
-
-            # ── Cancelar inactivos ─────────────────────────────────────────
+            # ── Cancelar llamados que no confirmaron en 3 min ──────────────
             cancelados = cancelar_inactivos()
             for c in cancelados:
                 codigo       = c["codigo"]
@@ -61,7 +51,7 @@ async def inactivity_worker():
                     "turno_dia_id": turno_dia_id,
                 }))
 
-            # ── Auto-llamar siguiente turno (grupo completo) ───────────────
+            # ── Llenar los cupos libres con las siguientes personas ────────
             for turno_dia_id in get_turno_dias_en_servicio():
                 for llamado in llamar_siguiente(turno_dia_id):
                     codigo     = llamado["codigo"]
