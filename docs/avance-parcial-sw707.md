@@ -25,15 +25,15 @@ Este registro aplica el cronograma del [Proyecto Integrador](Proyecto_Integrador
 
 ## 2. Verificaciones Ejecutadas en este Checkout
 
-- **Backend Sintaxis y Compilación:** `python -m compileall -q backend/src backend/run.py` $\rightarrow$ **0 errores**.
-- **Infraestructura:** `docker compose -f backend/docker-compose.yml config -q` $\rightarrow$ configuración validada. Servicios PostgreSQL (5433), Redis (6379) y RabbitMQ (5672/15672) operativos.
+- **Backend Sintaxis y Compilación:** `python -m compileall -q src run.py tests scripts benchmarks` $\rightarrow$ **0 errores**.
+- **Infraestructura:** `docker compose config -q` $\rightarrow$ configuración validada. Servicios PostgreSQL (5433), Redis (6379) y RabbitMQ (5672/15672) operativos.
 - **Backend HTTP Smoke Test:** `GET /ping` respondió HTTP 200 y `/openapi.json` operativo con los routers registrados.
 - **Frontend Tipos:** `npx tsc --noEmit` $\rightarrow$ **0 errores de tipado TypeScript**.
 - **Frontend Lint:** `npm run lint` $\rightarrow$ **0 errores** (13 advertencias de optimización en hooks).
 - **Frontend Build Web:** `npx expo export --platform web` generó las rutas estáticas correctamente.
-- **Suite Automatizada SW707:** `python -m pytest backend/tests` → **76 passed** con la base de pruebas levantada (`63 passed, 13 skipped` sin ella). Cubre contratos, barricadas defensivas, errores y excepciones, concurrencia y resiliencia sobre el código real.
-- **Dependencias:** instalación desde cero de `backend/requirements.txt` en Python 3.12 sin conflictos (`pip check`) y `pip-audit` sin vulnerabilidades conocidas.
-- **Carga:** Locust con 1000 y 2000 estudiantes simultáneos; resultados en [`backend/tests/carga/README.md`](../backend/tests/carga/README.md).
+- **Suite Automatizada SW707:** `python -m pytest tests` → **76 passed** con la base de pruebas levantada (`63 passed, 13 skipped` sin ella). Cubre contratos, barricadas defensivas, errores y excepciones, concurrencia y resiliencia sobre el código real.
+- **Dependencias:** instalación desde cero de `requirements.txt` en Python 3.12 sin conflictos (`pip check`) y `pip-audit` sin vulnerabilidades conocidas.
+- **Carga:** Locust con 1000 y 2000 estudiantes simultáneos; resultados en [`benchmarks/README.md`](../benchmarks/README.md).
 
 ---
 

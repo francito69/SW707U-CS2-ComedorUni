@@ -22,7 +22,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env.prod}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ../config/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
@@ -57,7 +57,8 @@ services:
   backend:
     container_name: comedor-backend
     build:
-      context: .
+      context: ..
+      dockerfile: deployment/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:  { condition: service_healthy }

@@ -1,5 +1,5 @@
-from backend.src.modules.queues.domain.casos_uso import AsignarTurno
-from backend.src.modules.queues.infraestructura.adaptador_memoria import RepositorioTurnosMemoria
+from src.modules.queues.domain.casos_uso import AsignarTurno
+from src.modules.queues.infraestructura.adaptador_memoria import RepositorioTurnosMemoria
 
 
 def test_asignar_primer_turno_en_memoria():

@@ -11,11 +11,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from backend.src.modules.auth import router as auth_router
-from backend.src.modules.auth.service import parse_student_data
-from backend.src.modules.queues import router
-from backend.src.shared.errores import DatosPortalInvalidos
-from backend.src.shared.validacion import MAX_FOTO_BASE64
+from src.modules.auth import router as auth_router
+from src.modules.auth.service import parse_student_data
+from src.modules.queues import router
+from src.shared.errores import DatosPortalInvalidos
+from src.shared.validacion import MAX_FOTO_BASE64
 
 SID = str(uuid.uuid4())
 

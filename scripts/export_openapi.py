@@ -10,13 +10,13 @@ import yaml
 
 # Asegura que la carpeta backend/ (que contiene el paquete `src`) esté en el path,
 # sin importar desde dónde se ejecute el script.
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from src.main import app
 
-OUTPUT = BACKEND_DIR / "openapi.yaml"
+OUTPUT = ROOT_DIR / "config" / "openapi.yaml"
 
 
 def main() -> None:

@@ -1,5 +1,5 @@
 import pytest
-from backend.src.modules.queues.service import calcular_turno_asignado
+from src.modules.queues.service import calcular_turno_asignado
 
 
 def test_calcular_turno_asignado_primeros_turnos():

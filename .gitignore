@@ -52,14 +52,9 @@ docs/*.pdf
 *.docx
 *.pptx
 SW708-Informe-de-referencia-Entrega1.pdf
-docs/c4/plantuml.jar
-
 # Material de clase y diapositivas teóricas
 docs/clase/
-
-# Modelos intermedios y decisiones de arquitectura
-docs/adr/
-docs/c4/
+docs/c4/plantuml.jar
 
 # Archivo histórico de proyectos/cursos previos
 docs/historico/

@@ -181,11 +181,11 @@ servicio y persistencia siguiendo una operación concreta.
 
 **En pantalla**
 
-- Inicio FastAPI: `backend/src/main.py`.
-- Autenticación: `backend/src/modules/auth/`.
-- Cola: `backend/src/modules/queues/router.py` y `service.py`.
-- Persistencia SQL: `backend/src/shared/db.py`; esquema en
-  `backend/migrations/001_init.sql`.
+- Inicio FastAPI: `src/main.py`.
+- Autenticación: `src/modules/auth/`.
+- Cola: `src/modules/queues/router.py` y `service.py`.
+- Persistencia SQL: `src/shared/db.py`; esquema en
+  `config/migrations/001_init.sql`.
 - Frontend: `frontend/src/app/index.tsx`, `home.tsx`, `ticket.tsx`.
 - Eventos: `shared/rabbitmq.py`, consumers `notifications/` y `tracking/`.
 
@@ -199,10 +199,10 @@ servicio usa PostgreSQL a través de `get_db_conn`. Abran primero
 
 **Código a abrir**
 
-- `backend/src/main.py:52` — lifespan; `:74` — health; routers registrados al final.
+- `src/main.py:52` — lifespan; `:74` — health; routers registrados al final.
 - `frontend/src/app/home.tsx:95` — `handleJoinQueue`.
-- `backend/src/modules/queues/router.py:85` — `join_queue`.
-- `backend/src/modules/queues/service.py:255` — `crear_turno`.
+- `src/modules/queues/router.py:85` — `join_queue`.
+- `src/modules/queues/service.py:255` — `crear_turno`.
 
 ### Diapositiva 7 | Acceso: Portal, parseo, sesión y biometría | 3:00 | Parte II
 
@@ -240,10 +240,10 @@ Presenten la foto como dato sensible y no usen imágenes reales en la demo.”
 
 - `frontend/src/app/index.tsx:96` — script WebView; `:126` — `onMessage`;
   `:292` — `verifyBiometric`.
-- `backend/src/modules/auth/router.py:22` — `/parse-data`;
+- `src/modules/auth/router.py:22` — `/parse-data`;
   `:91` — `/verify-biometric`.
-- `backend/src/modules/auth/service.py:8` — parseo.
-- `backend/src/modules/auth/biometric.py:16` — comparación.
+- `src/modules/auth/service.py:8` — parseo.
+- `src/modules/auth/biometric.py:16` — comparación.
 
 ### Diapositiva 8 | Solicitar un turno: estado del cliente | 3:00 | Parte II
 
@@ -312,10 +312,10 @@ de capacidad y conflicto deben uniformarse y probarse.”
 
 **Código a abrir**
 
-- `backend/src/modules/queues/router.py:40` — `_require_session`.
-- `backend/src/modules/queues/router.py:85` — `join_queue`;
+- `src/modules/queues/router.py:40` — `_require_session`.
+- `src/modules/queues/router.py:85` — `join_queue`;
   `:137` — status; `:163` — confirm.
-- `backend/src/modules/queues/schemas.py:5` — request/response de cola.
+- `src/modules/queues/schemas.py:5` — request/response de cola.
 
 ### Diapositiva 10 | Base de datos y carrera de concurrencia | 4:00 | Parte II
 
@@ -353,15 +353,15 @@ inserción a una transacción común y probarla con PostgreSQL real.”
 5. Repetir con el mismo estudiante concurrente y comprobar como máximo un turno
    activo.
 
-No decir que esta prueba pasó. En `backend/tests/` solo está `.gitkeep`.
+No decir que esta prueba pasó. En `tests/` solo está `.gitkeep`.
 
 **Código a abrir**
 
-- `backend/src/modules/queues/router.py:102` — duplicado; `:109` — lectura de cupo;
+- `src/modules/queues/router.py:102` — duplicado; `:109` — lectura de cupo;
   `:114` — llamada a crear.
-- `backend/src/modules/queues/service.py:149` — conteo;
+- `src/modules/queues/service.py:149` — conteo;
   `:255` — bloqueo y numeración.
-- `backend/migrations/001_init.sql:80` — índices únicos.
+- `config/migrations/001_init.sql:80` — índices únicos.
 
 ### Diapositiva 11 | Máquina de estados y tiempo real | 3:30 | Parte II
 
@@ -394,10 +394,10 @@ del día, así dos confirmaciones simultáneas no llaman de más.”
 
 - `frontend/src/app/ticket.tsx:35` — pantalla; `:65` — WebSocket;
   `:130` — confirmar.
-- `backend/src/modules/queues/router.py:241` — WebSocket servidor.
-- `backend/src/modules/queues/worker.py:21` — worker.
-- `backend/src/modules/reassignment/service.py:6` — llamado por cupos.
-- `backend/src/modules/queues/service.py` — `cancelar_inactivos` (plazo desde `llamado_at`).
+- `src/modules/queues/router.py:241` — WebSocket servidor.
+- `src/modules/queues/worker.py:21` — worker.
+- `src/modules/reassignment/service.py:6` — llamado por cupos.
+- `src/modules/queues/service.py` — `cancelar_inactivos` (plazo desde `llamado_at`).
 
 ### Diapositiva 12 | Errores, eventos y resiliencia real | 2:30 | Parte II
 
@@ -574,18 +574,18 @@ Antes de exponer, marcar estos archivos y practicar saltos rápidos en VS Code:
 
 | Orden | Archivo / símbolo                                                                                     | Qué explicar                                 |
 | ----- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| 1     | `backend/src/main.py` — `lifespan`, `ping`, `include_router`                                  | Arranque, healthcheck, worker y consumers     |
+| 1     | `src/main.py` — `lifespan`, `ping`, `include_router`                                  | Arranque, healthcheck, worker y consumers     |
 | 2     | `frontend/src/app/index.tsx` — WebView, `onMessage`, `verifyBiometric`                          | Login institucional, entrada HTML, biometría |
-| 3     | `backend/src/modules/auth/router.py` — `parse_data`, `verify_biometric`, `get_me`             | Persistencia y sesión                        |
-| 4     | `backend/src/modules/auth/service.py` — `parse_student_data`                                      | Parseo por selectores y cursos                |
+| 3     | `src/modules/auth/router.py` — `parse_data`, `verify_biometric`, `get_me`             | Persistencia y sesión                        |
+| 4     | `src/modules/auth/service.py` — `parse_student_data`                                      | Parseo por selectores y cursos                |
 | 5     | `frontend/src/app/home.tsx` — `handleJoinQueue`                                                   | Solicitud del cliente                         |
-| 6     | `backend/src/modules/queues/router.py` — `join_queue`, `queue_status`, `confirm_presence`     | Contrato, validación y side effects          |
-| 7     | `backend/src/modules/queues/service.py` — `raciones_usadas`, `crear_turno`, `confirmar_turno` | SQL, transacción y riesgo de carrera         |
-| 8     | `backend/migrations/001_init.sql` — `turnos`, índices                                            | Estados e integridad en DB                    |
+| 6     | `src/modules/queues/router.py` — `join_queue`, `queue_status`, `confirm_presence`     | Contrato, validación y side effects          |
+| 7     | `src/modules/queues/service.py` — `raciones_usadas`, `crear_turno`, `confirmar_turno` | SQL, transacción y riesgo de carrera         |
+| 8     | `config/migrations/001_init.sql` — `turnos`, índices                                            | Estados e integridad en DB                    |
 | 9     | `frontend/src/app/ticket.tsx` — `connectWS`, `handleWsMessage`, `handleConfirm`               | Actualización de ticket                      |
-| 10    | `backend/src/modules/queues/worker.py` y `reassignment/service.py`                                 | Expiración y llamado de grupos               |
-| 11    | `backend/src/shared/rabbitmq.py` y consumers M4/M5                                                   | Publicación, ack y manejo de errores         |
-| 12    | `backend/requirements.txt`, `frontend/src/package.json` y lockfile                                 | Dependencias y reproducibilidad               |
+| 10    | `src/modules/queues/worker.py` y `reassignment/service.py`                                 | Expiración y llamado de grupos               |
+| 11    | `src/shared/rabbitmq.py` y consumers M4/M5                                                   | Publicación, ack y manejo de errores         |
+| 12    | `requirements.txt`, `frontend/src/package.json` y lockfile                                 | Dependencias y reproducibilidad               |
 
 ## 7. Reglas para la defensa
 
@@ -652,9 +652,9 @@ un JWT. Después, `POST /verify-biometric` recibe `sid` y `photo_base64` y respo
 con `verified`, `distance` y `message`.”
 
 **Código a mostrar:** `frontend/src/app/index.tsx::onMessage`,
-`backend/src/modules/auth/router.py::parse_data` y `verify_biometric`,
-`backend/src/modules/auth/service.py::parse_student_data` y
-`backend/src/modules/auth/redis_store.py`.
+`src/modules/auth/router.py::parse_data` y `verify_biometric`,
+`src/modules/auth/service.py::parse_student_data` y
+`src/modules/auth/redis_store.py`.
 
 ### Diapositiva 9 — Request y response de una solicitud de turno
 

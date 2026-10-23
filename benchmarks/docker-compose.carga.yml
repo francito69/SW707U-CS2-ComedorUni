@@ -16,7 +16,7 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     volumes:
-      - ../../migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ../config/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
 
   redis:
     container_name: comedor-carga-redis

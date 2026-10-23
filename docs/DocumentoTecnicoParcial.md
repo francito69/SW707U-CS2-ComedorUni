@@ -79,7 +79,7 @@ La Etapa I del proyecto establece la **línea base verificable y robusta** del s
 ## 3. Arquitectura y Decisiones Técnicas
 
 ### 3.1 Modelo de Arquitectura (Monolito Modular Asíncrono)
-El backend está construido sobre **FastAPI** bajo un enfoque de **Monolito Modular** respaldado por microservicios de infraestructura (PostgreSQL, Redis, RabbitMQ). Todos los módulos de negocio comparten el mismo ciclo de vida de aplicación (`lifespan`), ejecutando los workers y consumidores como corutinas concurrentes sobre el Event Loop de `asyncio`.
+El backend está construido sobre **FastAPI** bajo un enfoque de **Monolito Modular** respaldado por microservicios de infraestructura (PostgreSQL 15, Redis 7, RabbitMQ 3). Todos los módulos de negocio comparten el mismo ciclo de vida de aplicación (`lifespan`), ejecutando los workers y consumidores como corutinas concurrentes sobre el Event Loop de `asyncio` dentro de un entorno multi-proceso de 6 workers de Uvicorn.
 
 ```mermaid
 graph TD
@@ -88,18 +88,18 @@ graph TD
         WV["WebView Portal Alumnos UNI"]
     end
 
-    subgraph Backend ["Backend FastAPI (Monolito Modular)"]
+    subgraph Backend ["Backend FastAPI (Monolito Modular - 6 Workers)"]
         API["FastAPI HTTP / WebSocket Router"]
         M1["Módulo Auth & Sesión (Redis Store)"]
         M2["Módulo Colas y Turnos"]
-        Worker["Worker Inactividad (asyncio task)"]
+        Worker["Worker Inactividad (Leader Lock)"]
         M4["M4 Consumer Push (aio-pika)"]
         M5["M5 Consumer Tracking (aio-pika)"]
     end
 
     subgraph Infraestructura ["Infraestructura Persistente"]
         PG[("PostgreSQL 15 (Fuente de Verdad)")]
-        RD[("Redis 7 (Sesiones sid + TTL)")]
+        RD[("Redis 7 (Sesiones sid + Pub/Sub WS + Locks)")]
         RMQ["RabbitMQ 3 (Topic Exchange: comedor)"]
     end
 
@@ -125,7 +125,55 @@ graph TD
     M5 -->|Insert Idempotente Asistencia| PG
 ```
 
-### 3.2 Decisiones Registradas de Arquitectura (ADR)
+### 3.2 Modelado C4 en 4 Niveles de Abstracción
+
+El sistema se encuentra documentado exhaustivamente mediante el **Modelo C4** en la carpeta [`docs/c4/`](c4/README.md):
+
+1. **Nivel 1: Contexto del Sistema:** Identifica los actores primarios (Estudiante UNI, Administrador del Comedor) y las integraciones con el Portal Alumnos UNI (`alumnos.uni.edu.pe`) y Expo Push Service (`exp.host`).  
+   ![C4 Nivel 1: Contexto](../resources/img/Nivel1_ContextoV4.png)
+2. **Nivel 2: Contenedores:** Delimita las aplicaciones ejecutables y almacenes de datos: App Móvil (Expo/React Native), Backend FastAPI (6 workers), PostgreSQL 15, Redis 7 y RabbitMQ 3.  
+   ![C4 Nivel 2: Contenedores](../resources/img/Nivel2_Contenedores_V4.png)
+3. **Nivel 3: Componentes:** Descompone el backend en sus 7 módulos desacoplados: M1 (Autenticación), M2 (Colas), M3 (Turnos), M4 (Push), M5 (Seguimiento), M6 (Reasignación) y M7 (Configuración/Menú).  
+   ![C4 Nivel 3: Consolidado](../resources/img/Nivel3_consolidado.png)
+4. **Nivel 4: Despliegue y Código:** Topología de red multi-proceso, mapeo de puertos e implementación de la rodaja de **Arquitectura Hexagonal (Puertos y Adaptadores)** en `src/modules/queues/domain` e `infraestructura`.  
+   ![C4 Nivel 4: Despliegue](../resources/img/Nivel4_Despliegue_M2_M3.png)
+
+> Consulte la especificación completa de componentes por módulo en el documento [docs/c4/README.md](c4/README.md).
+
+### 3.3 Modelo de Vistas Arquitectónicas 4+1 (Kruchten)
+
+Para garantizar consistencia entre requerimientos funcionales, concurrencia y despliegue físico, el proyecto cuenta con el documento dedicado [`docs/arquitectura-4plus1.md`](arquitectura-4plus1.md):
+
+- **Vista Lógica:** Modelo de dominio inmutable (`Estudiante`, `TurnoDia`, `Turno`, `RegistroSeguimiento`, `TurnosConfig`, `MenuDia`).
+- **Vista de Procesos:** Sincronización en tiempo real vía WebSockets, bus de Redis Pub/Sub, bloqueo pesimista `SELECT ... FOR UPDATE` y worker autónomo de inactividad con leader lock.
+- **Vista de Desarrollo:** Estructura modular del repositorio (Sección 16), programación por contratos (`src/shared/contratos.py`) y barricadas defensivas.
+- **Vista Física / Despliegue:** Orquestación de 6 workers de Uvicorn en Docker, pool de conexiones PostgreSQL con `minconn=maxconn` y RabbitMQ Topic Exchange.
+- **+1 Vista de Escenarios:** Validación mediante 4 casos de uso críticos (Login/Biometría, Encolamiento Concurrente masivo con Locust, Notificaciones Push y Confirmación en puerta sin esperar al rezagado).
+
+### 3.4 Estructura Estándar del Repositorio (Cumplimiento Sección 16)
+
+El repositorio se organizó bajo la **Sección 16 ("Estructura sugerida del repositorio") del Proyecto Integrador SW707**:
+
+| Directorio / Archivo | Propósito según Sección 16 | Implementación en ComedorUNI |
+|---|---|---|
+| `project-name/` | Raíz del proyecto | `SW707U-CS2-ComedorUni/` |
+| `src/` | Código fuente principal | Backend FastAPI: `modules/`, `shared/`, `main.py` |
+| `tests/` | Pruebas automatizadas | Suite de 76 pruebas con `pytest` (`test_contracts.py`, `test_defensive.py`, etc.) |
+| `docs/` | Documentación técnica | Documento técnico, C4 en 4 niveles, 4+1 de Kruchten, ADRs, guion de exposición |
+| `config/` | Archivos de configuración | Migraciones SQL (`config/migrations/001_init.sql`), Alembic y esquema OpenAPI |
+| `deployment/` | Despliegue e infraestructura | `docker-compose.yml`, `docker-compose.prod.yml` (multi-worker) y `Dockerfile` |
+| `scripts/` | Scripts de soporte | Medición de acoplamiento (`medir_acoplamiento.py`), exportador OpenAPI y túnel |
+| `benchmarks/` | Pruebas de rendimiento | Escenario de carga con Locust (1000/2000 usuarios), sembrador y verificador |
+| `legacy/` | Prototipos anteriores | Registro de decisiones superadas (JWT vs Redis, proceso único vs multi-worker) |
+| `frontend/` | Aplicación cliente | App móvil/web en React Native y Expo Router |
+| `Dockerfile` | Contenedor de la app | Imagen `python:3.12-slim` con dependencias de sistema y Python |
+| `docker-compose.yml` | Stack local de servicios | PostgreSQL 15 (5433), Redis 7 (6379), RabbitMQ 3 (5672/15672) |
+| `README.md` | Guía de uso y arquitectura | Guía rápida de instalación, ejecución, pruebas y arquitectura |
+| `CHANGELOG.md` | Historial de versiones | Registro formal en formato Keep a Changelog (versión v1.0.0 Parcial) |
+| `.env.example` | Variables de entorno | Plantilla de configuración reproducible sin secretos |
+| `.gitignore` | Exclusiones de Git | Exclusiones de entornos virtuales, cachés y artefactos de compilación |
+
+### 3.5 Decisiones Registradas de Arquitectura (ADR)
 - **ADR-001 (Configuración Dinámica de URLs del Backend):**  
   Se erradicó el *hardcoding* de la IP en `frontend/src/constants/api.ts`. Al arrancar, la app lee la URL vigente del backend desde un Gist de GitHub (así un cambio de URL del túnel no obliga a recompilar), la guarda en `expo-secure-store` y, si no puede leerla, usa `EXPO_PUBLIC_API_URL` / `EXPO_PUBLIC_WS_URL`. Esto permite alternar entre emulador Android (`10.0.2.2:8000`), navegador local, dispositivo en la LAN o el túnel público.
 - **Conservación de PostgreSQL como Fuente Única de Verdad:**  
@@ -133,14 +181,14 @@ graph TD
 - **Varios procesos de API (6 workers en producción):**  
   `run.py` levanta `WORKERS` procesos de uvicorn para usar varios núcleos. Cada proceso tiene sus propias conexiones WebSocket, así que los avisos se reparten por Redis Pub/Sub y las tareas periódicas usan un lock para correr una sola vez por ciclo (sección 8.3).
 - **Prevención de Recolección de Basura en Tareas Asíncronas (`_background_tasks`):**  
-  En `backend/src/main.py`, FastAPI almacena referencias fuertes en el conjunto `_background_tasks` para el worker de inactividad y los consumidores de RabbitMQ. Si se crearan con `asyncio.create_task()` sin guardar referencia, el Garbage Collector de Python destruiría la tarea silenciosamente al no haber referencias externas en el heap, deteniendo el procesamiento sin arrojar excepción.
+  En `src/main.py`, FastAPI almacena referencias fuertes en el conjunto `_background_tasks` para el worker de inactividad y los consumidores de RabbitMQ. Si se crearan con `asyncio.create_task()` sin guardar referencia, el Garbage Collector de Python destruiría la tarea silenciosamente al no haber referencias externas en el heap, deteniendo el procesamiento sin arrojar excepción.
 
 ---
 
 ## 4. Gestión de Dependencias y Reúso
 
 ### 4.1 Política de versiones
-- **Backend:** `backend/requirements.txt` fija **versiones exactas** (`==`): las mismas con las que pasan la suite de pruebas y la prueba de carga. Las herramientas de desarrollo (`pytest`, `pip-audit`) están aparte, en `backend/requirements-dev.txt`. Se verificó que el conjunto se instala desde cero en un entorno limpio de Python 3.12.
+- **Backend:** `requirements.txt` fija **versiones exactas** (`==`): las mismas con las que pasan la suite de pruebas y la prueba de carga. Las herramientas de desarrollo (`pytest`, `pip-audit`) están aparte, en `requirements-dev.txt`. Se verificó que el conjunto se instala desde cero en un entorno limpio de Python 3.12.
 - **Frontend:** `frontend/src/package-lock.json` fija el árbol completo; `package.json` usa los rangos `~` que recomienda Expo para su SDK.
 
 ### 4.2 Inventario de dependencias directas
@@ -149,11 +197,11 @@ graph TD
 |---|---|:---:|---|
 | Backend | `fastapi` | 0.141.1 | API HTTP y WebSocket; validación Pydantic en la frontera (sección 6). |
 | Backend | `uvicorn[standard]` | 0.53.0 | Servidor ASGI; en producción levanta `WORKERS` procesos (`run.py`). |
-| Backend | `python-dotenv` | 1.2.3 | Carga `backend/.env`. |
-| Backend | `psycopg2-binary` | 2.9.13 | Driver de PostgreSQL y `ThreadedConnectionPool` (`shared/db.py`). |
+| Backend | `python-dotenv` | 1.2.3 | Carga `.env`. |
+| Backend | `psycopg2-binary` | 2.9.13 | Driver de PostgreSQL y `ThreadedConnectionPool` (`src/shared/db.py`). |
 | Backend | `redis` | 8.1.0 | Sesiones, bus de WebSockets entre workers y lock de líder. |
 | Backend | `aio-pika` | 10.0.1 | AMQP asíncrono; `connect_robust` reconecta solo. |
-| Backend | `httpx` | 0.28.1 | Envío de push a Expo (`shared/push.py`) y `TestClient` en pruebas. |
+| Backend | `httpx` | 0.28.1 | Envío de push a Expo (`src/shared/push.py`) y `TestClient` en pruebas. |
 | Backend | `beautifulsoup4` | 4.15.0 | Lectura del HTML del Portal Alumnos UNI. |
 | Backend | `deepface` + `tf-keras` | 0.0.101 / 2.21.0 | Verificación facial (Facenet). `tf-keras` lo exige deepface con TensorFlow ≥ 2.16. |
 | Backend | `opencv-python` | 4.10.0.84 | Detector de rostros de deepface. Fijado en 4.x: la 5.x eliminó los Haar cascades (sección 5.4). |
@@ -164,12 +212,12 @@ graph TD
 | Frontend | `expo-notifications` / `expo-secure-store` | ~0.32.17 / ~15.0.8 | Token push y caché segura de la URL del backend. |
 
 ### 4.3 Auditoría de seguridad y depuración del inventario
-- **`pip-audit -r backend/requirements.txt`** (pip-audit 2.10.1, 22-oct-2026) revisó **90 paquetes** (directos y transitivos). Único hallazgo: **Pillow 12.3.0 con 35 CVE**, todas corregidas en 13.0.0. Se subió a **13.0.0** y se validó instalando el conjunto desde cero y corriendo la suite y la prueba de carga.
+- **`pip-audit -r requirements.txt`** (pip-audit 2.10.1, 22-oct-2026) revisó **90 paquetes** (directos y transitivos). Único hallazgo: **Pillow 12.3.0 con 35 CVE**, todas corregidas en 13.0.0. Se subió a **13.0.0** y se validó instalando el conjunto desde cero y corriendo la suite y la prueba de carga.
 - **Dependencia sin uso eliminada:** `requests` estaba declarada pero ningún módulo la importa (deepface la trae como transitiva).
-- **Dependencia usada sin declarar:** `numpy` se importa en `auth/biometric.py`; ahora está declarada con su versión.
+- **Dependencia usada sin declarar:** `numpy` se importa en `src/modules/auth/biometric.py`; ahora está declarada con su versión.
 
 ### 4.4 Reúso
-Se reutiliza lo existente antes de escribir código propio: el pool de `psycopg2` (envuelto, no reimplementado), la reconexión de `aio-pika`, la validación de Pydantic y el detector de deepface. Solo se escribió código propio donde no había pieza que reutilizar para este caso: el bus de WebSockets entre workers (`shared/ws_bus.py`) y el lock de líder (`shared/leader_lock.py`), de unas 40 líneas cada uno.
+Se reutiliza lo existente antes de escribir código propio: el pool de `psycopg2` (envuelto, no reimplementado), la reconexión de `aio-pika`, la validación de Pydantic y el detector de deepface. Solo se escribió código propio donde no había pieza que reutilizar para este caso: el bus de WebSockets entre workers (`src/shared/ws_bus.py`) y el lock de líder (`src/shared/leader_lock.py`), de unas 40 líneas cada uno.
 
 **Costo conocido:** `deepface` importa TensorFlow al arrancar cada worker. Con 6 workers el modelo se carga 6 veces (tiempo de arranque y memoria). Es la dependencia más pesada del sistema y está registrada como limitación (sección 11).
 
@@ -181,8 +229,8 @@ Problemas que aparecieron **al ejecutar** el sistema, no al compilarlo. Para cad
 
 ### 5.1 Desajuste de puerto de PostgreSQL
 - **Síntoma:** `psycopg2.OperationalError: Connection refused` al arrancar sin `.env`.
-- **Causa:** Compose publica PostgreSQL en el puerto `5433` del host (`5433:5432`) y `shared/db.py` usaba `5432` por defecto.
-- **Corrección:** `DB_PORT=5433` en `backend/.env.example`, y el log de arranque del pool indica a qué host y puerto se conecta (`Creando pool (15-15) hacia localhost:5433/comedor_uni`).
+- **Causa:** Compose publica PostgreSQL en el puerto `5433` del host (`5433:5432`) y `src/shared/db.py` usaba `5432` por defecto.
+- **Corrección:** `DB_PORT=5433` en `.env.example`, y el log de arranque del pool indica a qué host y puerto se conecta (`Creando pool (15-15) hacia localhost:5433/comedor_uni`).
 
 ### 5.2 Backend que arranca antes que RabbitMQ
 - **Síntoma:** con Compose, los consumers M4/M5 fallaban al conectar y quedaban apagados en silencio: no salían push.
@@ -344,10 +392,10 @@ El router mantiene los chequeos rápidos sin candado (turno existente, raciones 
 - **Pool de conexiones:** inicialización con *double-checked locking* (sin ella, dos hilos al arrancar creaban dos pools distintos y perdían conexiones) y semáforo para esperar conexión (sección 5.3).
 - **Event loop:** la base de datos corre en el threadpool (sección 5.5).
 - **Llamado de turnos:** la cola avanza persona por persona, con como máximo `raciones_max / 10` personas `LLAMADO` a la vez. Cada confirmación, salida o vencimiento libera un cupo y se llama a la siguiente persona en orden. `llamar_siguiente` toma el mismo candado `FOR UPDATE` del turno del día, para que dos confirmaciones simultáneas no calculen los mismos cupos libres y llamen de más (`test_llamadas_simultaneas_no_superan_los_cupos`).
-- **Varios procesos (6 workers):** cada worker tiene sus propias conexiones WebSocket en memoria. Los avisos pasan por Redis Pub/Sub (`shared/ws_bus.py`) para llegar al estudiante esté en el worker que esté. Las tareas periódicas usan un lock de líder en Redis (`SET NX EX`, `shared/leader_lock.py`), para que el worker de inactividad corra una sola vez por ciclo y no seis.
+- **Varios procesos (6 workers):** cada worker tiene sus propias conexiones WebSocket en memoria. Los avisos pasan por Redis Pub/Sub (`src/shared/ws_bus.py`) para llegar al estudiante esté en el worker que esté. Las tareas periódicas usan un lock de líder en Redis (`SET NX EX`, `src/shared/leader_lock.py`), para que el worker de inactividad corra una sola vez por ciclo y no seis.
 
 ### 8.4 Evidencia bajo carga real (Locust)
-Prueba de "hora punta" (`backend/tests/carga/`): cada usuario de Locust es un estudiante distinto con sesión real en Redis. Todos piden turno casi a la vez (200 por segundo) y luego consultan su estado y el menú. Backend con 6 workers, infraestructura aislada, misma laptop (20 núcleos, 16 GB). Al terminar cada corrida se revisa la base.
+Prueba de "hora punta" ([`benchmarks/`](../benchmarks/README.md)): cada usuario de Locust es un estudiante distinto con sesión real en Redis. Todos piden turno casi a la vez (200 por segundo) y luego consultan su estado y el menú. Backend con 6 workers, infraestructura aislada, misma laptop (20 núcleos, 16 GB). Al terminar cada corrida se revisa la base.
 
 | Corrida | Estudiantes | Peticiones/s | Errores | Pedir turno p50 / p95 | Consultar estado p95 |
 |---|:---:|:---:|---|:---:|:---:|
@@ -375,10 +423,10 @@ En **todas** las corridas la base quedó consistente: ningún número de turno r
 | PostgreSQL o Redis caídos durante un request | 503 controlado, sin filtrar detalles internos. | `test_postgres_caido_responde_503_sin_filtrar_detalles`, `test_redis_caido_responde_503` |
 | Pool de conexiones saturado | El request espera hasta 10 s una conexión libre; recién entonces responde 503. | `test_pool_lleno_hace_esperar_y_falla_solo_tras_el_timeout` y Locust (sección 8.4) |
 | Reentrega de un mensaje (*at-least-once*) | M5 inserta con `ON CONFLICT DO NOTHING`: el historial no se duplica. | `test_m5_es_idempotente_ante_reentrega` |
-| Expo Push caído | Se registra `WARNING`; el turno sigue válido y la app lo ve por WebSocket. | Revisión de `shared/push.py` |
+| Expo Push caído | Se registra `WARNING`; el turno sigue válido y la app lo ve por WebSocket. | Revisión de `src/shared/push.py` |
 | Falla un ciclo del worker de inactividad | Se registra el error y el siguiente ciclo corre normalmente. | `test_worker_de_inactividad_sobrevive_a_un_ciclo_fallido` |
 | Un estudiante llamado no aparece (se quedó dormido) | La cola no lo espera: los demás siguen confirmando y se llama a las siguientes personas por los otros cupos. Puede confirmar hasta 3 min después de su llamado, pero no recupera su lugar: entra al grupo que se atiende en ese momento, sin mover a quienes ya confirmaron. Pasado el plazo se cancela, aunque la app siga mandando pings. | `test_el_que_no_confirma_no_frena_la_cola`, `test_quien_confirma_tarde_entra_al_grupo_del_momento_sin_mover_a_nadie`, `test_a_los_3_minutos_se_cancela_aunque_la_app_mande_pings` |
-| Muere el worker que tenía el lock de líder | El lock expira (TTL de 55 s) y otro worker toma el ciclo siguiente. | Diseño de `shared/leader_lock.py` |
+| Muere el worker que tenía el lock de líder | El lock expira (TTL de 55 s) y otro worker toma el ciclo siguiente. | Diseño de `src/shared/leader_lock.py` |
 
 ---
 
@@ -389,11 +437,11 @@ Desde la raíz del repositorio:
 
 ```powershell
 # Unitarias (sin infraestructura)
-python -m pytest backend/tests
+python -m pytest tests
 
 # Para incluir las de integración contra PostgreSQL real, levantar antes la base aislada
-docker compose -f backend/tests/carga/docker-compose.carga.yml up -d postgres
-python -m pytest backend/tests
+docker compose -f benchmarks/docker-compose.carga.yml up -d postgres
+python -m pytest tests
 ```
 
 Sin la base de pruebas, las 13 pruebas de integración se saltan y muestran el comando para levantarla. Ninguna prueba usa la base de desarrollo: cada una crea su propio turno y sus estudiantes, y los borra al terminar.
@@ -418,11 +466,11 @@ Todas las pruebas ejercitan el código real del sistema (endpoints con `TestClie
 | `test_reasignacion.py` | 7 | Concurrencia y tolerancia a fallas | Llamado en orden hasta llenar los cupos; quien no confirma no frena la cola y puede confirmar dentro de su plazo; quien confirma tarde entra al grupo del momento sin mover a nadie; vencimiento a los 3 min desde el llamado aunque haya pings; llamadas simultáneas sin exceder cupos; al salir un llamado se llama al siguiente. |
 | `test_asignar_turno.py`, `test_caracterizacion_queues.py` | 5 | Pruebas y evidencias | Caso de uso `AsignarTurno` con repositorio en memoria y caracterización de `calcular_turno_asignado`. |
 
-**Prueba de carga:** `backend/tests/carga/` (Locust, con instrucciones en su `README.md`). Resultados en la sección 8.4.
+**Prueba de carga:** [`benchmarks/`](../benchmarks/README.md) (Locust, con instrucciones en su `README.md`). Resultados en la sección 8.4.
 
 ### 10.4 Otras verificaciones
-1. **Backend:** `python -m compileall -q backend/src backend/run.py` → 0 errores.
-2. **Dependencias:** `pip-audit -r backend/requirements.txt` → sin vulnerabilidades conocidas tras subir Pillow (sección 4.3).
+1. **Backend:** `python -m compileall -q src run.py tests scripts benchmarks` → 0 errores.
+2. **Dependencias:** `pip-audit -r requirements.txt` → sin vulnerabilidades conocidas tras subir Pillow (sección 4.3).
 3. **Frontend:** `npx tsc --noEmit` y `npm run lint` (registro del equipo en el avance parcial).
 
 ---
@@ -430,7 +478,7 @@ Todas las pruebas ejercitan el código real del sistema (endpoints con `TestClie
 ## 11. Limitaciones y Trabajo Futuro (Ruta hacia el Examen Final v2.0)
 
 1. **Biometría fuera del proceso de la API:** deepface y TensorFlow se cargan en cada worker. Moverlos a un servicio o proceso propio bajaría la memoria y el arranque, y permitiría escalar la API sin multiplicar el modelo.
-2. **Unificar la rodaja hexagonal con el flujo real:** el caso de uso `AsignarTurno` (`queues/domain`) existe y está probado, pero `/join` usa `service.crear_turno`. Pasar la regla de aforo y los contratos a `AsignarTurno` dejaría un solo camino.
+2. **Unificar la rodaja hexagonal con el flujo real:** el caso de uso `AsignarTurno` (`src/modules/queues/domain`) existe y está probado, pero `/join` usa `service.crear_turno`. Pasar la regla de aforo y los contratos a `AsignarTurno` dejaría un solo camino.
 3. **Observabilidad entre servicios:** los logs ya llevan `request_id`; falta propagarlo en los eventos de RabbitMQ para seguir un turno de punta a punta, y emitir los logs en JSON.
 4. **Carga medida desde otra máquina:** Locust corrió en la misma laptop que el backend; el techo real del sistema es mayor que el medido.
 5. **Máquina de estados declarativa** para el ciclo de vida del turno (`ESPERANDO` → `LLAMADO` → `ATENDIDO`/`CANCELADO`) y **configuración externalizada** de tiempos (ping, inactividad, tamaño de grupo).
@@ -440,5 +488,7 @@ Todas las pruebas ejercitan el código real del sistema (endpoints con `TestClie
 ## Enlaces Oficiales y Recursos Multimedia
 - **Video Explicativo de la Implementación:** [Ver Exposición Técnica en YouTube](https://www.youtube.com/watch?v=g4voiWE8LB8)
 - **Prototipo Base en Figma:** [Ver Prototipo Interactivo en Figma Make](https://www.figma.com/make/CoKplsedJ59U6BkDTlJLht/ComedorUni?fullscreen=1&t=N6J5IE1iyzJ2c1LJ-1&code-node-id=0-6)
-- **Diagramas de Arquitectura C4:** [Consultar Modelo C4 en docs/c4/](c4/)
+- **Modelo C4 Completo (Niveles 1 al 4):** [Consultar Modelo C4 en docs/c4/](c4/README.md)
+- **Modelo de Vistas Arquitectónicas 4+1 (Kruchten):** [Consultar Vistas 4+1 en docs/arquitectura-4plus1.md](arquitectura-4plus1.md)
 - **Registro de Decisiones de Arquitectura:** [Consultar ADRs en docs/adr/](adr/)
+

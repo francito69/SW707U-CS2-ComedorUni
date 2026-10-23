@@ -17,9 +17,9 @@ import psycopg2
 import psycopg2.pool
 import pytest
 
-from backend.src.modules.queues.service import crear_turno
-from backend.src.shared import db
-from backend.src.shared.errores import TurnoDuplicado
+from src.modules.queues.service import crear_turno
+from src.shared import db
+from src.shared.errores import TurnoDuplicado
 
 PG_PARAMS = dict(host=os.environ["DB_HOST"], port=int(os.environ["DB_PORT"]),
                  dbname="comedor_uni", user="postgres", password="postgres")

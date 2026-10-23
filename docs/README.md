@@ -33,7 +33,18 @@ Este directorio contiene los entregables técnicos y de presentación para la **
 
 ---
 
-## 3. Especificación del Sistema
+## 3. Arquitectura y Modelado de Software
+
+- 🏛️ **[Modelo C4 en 4 Niveles](c4/README.md)**  
+  Documentación gráfica y técnica completa en cuatro niveles: Contexto del Sistema (Nivel 1), Contenedores de Infraestructura (Nivel 2), Componentes por Módulo M1 a M7 y Consolidado (Nivel 3), y Despliegue / Código (Nivel 4).
+- 📐 **[Modelo de Vistas Arquitectónicas 4+1 de Kruchten](arquitectura-4plus1.md)**  
+  Articulación integral entre Vista Lógica (Dominio), Vista de Procesos (Concurrencia y WebSockets), Vista de Desarrollo (Estructura Sección 16 y Contratos DbC), Vista Física (Multi-worker Uvicorn y puertos) y Vista de Escenarios (+1).
+- 📑 **[Registro de Decisiones de Arquitectura (ADRs)](adr/)**  
+  Decisiones de configuración de URLs, sesión y persistencia.
+
+---
+
+## 4. Especificación del Sistema
 
 - 📋 **[Ficha del Sistema](ficha-del-sistema.md)**  
   Identificación del dominio, reglas de negocio esenciales, stack tecnológico y delimitación del alcance.

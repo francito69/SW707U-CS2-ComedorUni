@@ -6,17 +6,17 @@ menú (`GET /menu`) mientras esperan.
 
 ## Cómo correrla
 
-Desde `backend/tests/carga/`:
+Desde la raíz del repositorio:
 
 ```powershell
 # 1. Infra aislada (otros puertos, datos en memoria: no toca el stack de desarrollo)
-docker compose -f docker-compose.carga.yml up -d
+docker compose -f benchmarks/docker-compose.carga.yml up -d
 
 # 2. Estudiantes de prueba con sesión en Redis y turno PRUEBA con N raciones
-python preparar_datos.py sembrar --estudiantes 2000 --raciones 500
+python benchmarks/preparar_datos.py sembrar --estudiantes 2000 --raciones 500
 ```
 
-En otra terminal, desde `backend/`, el backend con 6 workers apuntando a esa infra:
+En otra terminal, desde la raíz del repositorio, el backend con 6 workers apuntando a esa infra:
 
 ```powershell
 $env:DB_PORT="5434"; $env:DB_POOL_MAX="15"; $env:REDIS_PORT="6380"; $env:RABBITMQ_PORT="5673"; $env:WORKERS="6"
@@ -27,9 +27,9 @@ Y la carga, más la verificación de consistencia al terminar:
 
 ```powershell
 pip install locust
-locust -f locustfile.py --host http://127.0.0.1:8000 --headless -u 1000 -r 200 -t 90s --html reporte.html
-python preparar_datos.py verificar --raciones 500
-docker compose -f docker-compose.carga.yml down
+locust -f benchmarks/locustfile.py --host http://127.0.0.1:8000 --headless -u 1000 -r 200 -t 90s --html benchmarks/reporte.html
+python benchmarks/preparar_datos.py verificar --raciones 500
+docker compose -f benchmarks/docker-compose.carga.yml down
 ```
 
 En Windows, usar `127.0.0.1` y no `localhost`: `localhost` intenta primero IPv6,

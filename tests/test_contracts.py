@@ -8,10 +8,10 @@ import uuid
 
 import pytest
 
-from backend.src.modules.queues import router, service
-from backend.src.modules.queues.service import calcular_turno_asignado, crear_turno
-from backend.src.shared.contratos import asegura, requiere
-from backend.src.shared.errores import ContratoViolado, SinRaciones
+from src.modules.queues import router, service
+from src.modules.queues.service import calcular_turno_asignado, crear_turno
+from src.shared.contratos import asegura, requiere
+from src.shared.errores import ContratoViolado, SinRaciones
 
 
 def nuevo_sid() -> str:

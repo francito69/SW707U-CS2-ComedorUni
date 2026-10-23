@@ -16,10 +16,10 @@ import psycopg2.pool
 import pytest
 import redis
 
-from backend.src.modules.queues import router
-from backend.src.shared import http_errores
-from backend.src.shared.logs import _RequestIdFilter
-from backend.src.shared.errores import (
+from src.modules.queues import router
+from src.shared import http_errores
+from src.shared.logs import _RequestIdFilter
+from src.shared.errores import (
     EstudianteNoRegistrado, SinRaciones, TurnoDuplicado, TurnoNoActivo, TurnoNoHabilitado,
 )
 

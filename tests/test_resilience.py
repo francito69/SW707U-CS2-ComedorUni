@@ -18,10 +18,10 @@ import psycopg2
 import pytest
 import redis
 
-from backend.src import main
-from backend.src.modules.queues import router, worker
-from backend.src.modules.tracking.service import registrar_encolamiento
-from backend.src.shared import rabbitmq, ws_bus
+from src import main
+from src.modules.queues import router, worker
+from src.modules.tracking.service import registrar_encolamiento
+from src.shared import rabbitmq, ws_bus
 
 SID = str(uuid.uuid4())
 

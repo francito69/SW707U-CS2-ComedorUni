@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from backend.src.modules.queues import router
-from backend.src.modules.queues.service import (
+from src.modules.queues import router
+from src.modules.queues.service import (
     cancelar_inactivos, confirmar_turno, crear_turno, turno_asignado_de,
 )
-from backend.src.modules.reassignment.service import llamar_siguiente
+from src.modules.reassignment.service import llamar_siguiente
 
 
 @pytest.fixture

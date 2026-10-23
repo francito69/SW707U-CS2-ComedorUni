@@ -3,7 +3,7 @@ Configuración común de las pruebas.
 
 - Unitarias: corren sin infraestructura (TestClient sin lifespan, dependencias
   externas reemplazadas con monkeypatch).
-- Integración (fixture `pg`): usan el Postgres aislado de tests/carga
+- Integración (fixture `pg`): usan el Postgres aislado de benchmarks
   (puerto 5434). Si no está levantado, se saltan con el comando para levantarlo.
   Cada prueba crea su propio turno y sus estudiantes y los borra al terminar.
 """
@@ -35,9 +35,13 @@ if "deepface" not in sys.modules:
     _fake.DeepFace = _DeepFace
     sys.modules["deepface"] = _fake
 
+import src  # noqa: E402
+sys.modules.setdefault("backend", types.ModuleType("backend"))
+sys.modules.setdefault("src", src)
+
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend.src.main import app  # noqa: E402
+from src.main import app  # noqa: E402
 
 PG_PARAMS = dict(host=os.environ["DB_HOST"], port=int(os.environ["DB_PORT"]),
                  dbname="comedor_uni", user="postgres", password="postgres")
@@ -55,7 +59,7 @@ def pg():
         conn = psycopg2.connect(connect_timeout=2, **PG_PARAMS)
     except psycopg2.OperationalError:
         pytest.skip("Postgres de pruebas no disponible: "
-                    "docker compose -f backend/tests/carga/docker-compose.carga.yml up -d")
+                    "docker compose -f benchmarks/docker-compose.carga.yml up -d")
     conn.autocommit = True
     yield conn
     conn.close()
