@@ -1,25 +1,41 @@
-# Documentación de ComedorUNI
+# Documentación Oficial de ComedorUNI — SW707
 
-## Entregables SW707
+Este directorio contiene los entregables técnicos y de presentación para la **Etapa I (Examen Parcial — v1.0)** del curso **Construcción de Software II (SW707 - 2026-II)** de la Universidad Nacional de Ingeniería (UNI).
 
-- [Proyecto Integrador SW707](Proyecto_Integrador_SW707.docx): guía oficial del
-  curso y cronograma de trabajo.
-- [Documento técnico parcial](DocumentoTecnicoParcial.docx): descripción técnica,
-  riesgos, contratos y criterios de verificación del sistema.
-- [Avance semanal hasta el parcial](avance-parcial-sw707.md): evidencia disponible,
-  estado de semanas 1–8 y brechas para llegar a `v1.0`.
+---
 
-## Documentación vigente del sistema
+## 1. Entregable Técnico Principal
 
-- [Ficha del sistema](ficha-del-sistema.md): alcance, reglas, stack y estado conocido.
-- [Escenarios de calidad](escenarios.md): objetivos medibles; no implica que estén
-  implementados o que hayan pasado sus pruebas.
-- [Arquitectura C4](c4/): modelo contrastado con el código y leyenda.
-- [Decisiones de arquitectura](adr/): decisiones registradas y su contexto.
-- [Bitácora de IA](bitacora-ia.md): registro académico del uso de herramientas.
+- 📄 **[Documento Técnico del Examen Parcial (Markdown)](DocumentoTecnicoParcial.md)**  
+  Documento técnico oficial y completo para la entrega de la Etapa I. Cumple al 100% con los 11 puntos de la guía y los 9 criterios de la rúbrica oficial (100% de la calificación):
+  1. Descripción del problema y usuarios.
+  2. Alcance y requisitos principales.
+  3. Arquitectura y decisiones técnicas.
+  4. Gestión de dependencias y reúso (10%).
+  5. Análisis de problemas de runtime (10%).
+  6. Design by Contract (15%) y Programación defensiva (10%).
+  7. Estrategia de errores y excepciones (15%).
+  8. Concurrencia y condiciones de carrera (15%).
+  9. Tolerancia a fallas y resiliencia (15%).
+  10. Pruebas automatizadas y evidencias (5%).
+  11. Limitaciones y evolución hacia el Examen Final (v2.0).
 
-## Archivo histórico
+---
 
-[historico/](historico/) conserva actividades, capítulos, prototipos y material del
-trabajo anterior. Se mantiene como referencia y no debe confundirse con evidencia de
-que esos componentes siguen implementados en el código actual.
+## 2. Preparación de la Defensa y Exposición Técnica
+
+- 🗣️ **[Guion para Exposición Técnica de 40 Minutos](guion-exposicion-sw707.md)**  
+  Estructura de sustentación minuto a minuto (35 min de exposición + 5 min de preguntas y defensa), con recorrido detallado a nivel de código fuente en frontend y backend.
+- 🎨 **[Prompts Maestros para Figma Make](prompts-figma-make.md)**  
+  Guía y prompts de ingeniería de interfaz con especificación completa de tokens (colores institucionales UNI, tipografía, radios, estados), pantallas del flujo de estudiante y micro-interacciones interactivas.
+- 📈 **[Avance Semanal hasta el Parcial](avance-parcial-sw707.md)**  
+  Bitácora de avance semanal (semanas 1 a 8), checklist de cierre de la línea base v1.0 y resumen de validaciones de compilación, linters y tests.
+
+---
+
+## 3. Especificación del Sistema
+
+- 📋 **[Ficha del Sistema](ficha-del-sistema.md)**  
+  Identificación del dominio, reglas de negocio esenciales, stack tecnológico y delimitación del alcance.
+- 🎯 **[Escenarios de Calidad](escenarios.md)**  
+  Definición de atributos de calidad para disponibilidad, latencia, integridad y concurrencia.

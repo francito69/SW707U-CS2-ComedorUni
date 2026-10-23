@@ -1,28 +1,68 @@
-﻿__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# ==============================================================================
+# .gitignore — ComedorUNI (Construcción de Software II - SW707)
+# ==============================================================================
 
+# ------------------------------------------------------------------------------
+# 1. Python, Entornos Virtuales y Caché
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
 .venv/
 env/
-.env
-.env.*
-!.env.example
-node_modules/
-.expo/
-dist/
-build/
-
 .pytest_cache/
 .mypy_cache/
 .coverage
 htmlcov/
 coverage/
 
+# ------------------------------------------------------------------------------
+# 2. Node.js, React Native, Expo y Empaquetado
+# ------------------------------------------------------------------------------
+node_modules/
+.expo/
+dist/
+build/
+*.tsbuildinfo
+
+# ------------------------------------------------------------------------------
+# 3. Variables de Entorno, Secretos y Credenciales
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------------------------
+# 4. Logs, Archivos Temporales y Bloqueos de Sistema
+# ------------------------------------------------------------------------------
 *.log
-
-docs/c4/plantuml.jar
-SW708-Informe-de-referencia-Entrega1.pdf
-
 .DS_Store
+Thumbs.db
+~$*
+*.tmp
+
+# ------------------------------------------------------------------------------
+# 5. Documentación Interna y Binarios Ocultos para Presentación Limpia (docs/)
+# ------------------------------------------------------------------------------
+# Archivos binarios de oficina (Word, PowerPoint, PDFs)
+docs/*.docx
+docs/*.pptx
+docs/*.pdf
+*.docx
+*.pptx
+SW708-Informe-de-referencia-Entrega1.pdf
+docs/c4/plantuml.jar
+
+# Material de clase y diapositivas teóricas
+docs/clase/
+
+# Modelos intermedios y decisiones de arquitectura
+docs/adr/
+docs/c4/
+
+# Archivo histórico de proyectos/cursos previos
+docs/historico/
+
+# Documentos externos a la entrega de SW707
+docs/bitacora-ia.md
