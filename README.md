@@ -139,4 +139,5 @@ npx expo export --platform web
 ## 👥 Equipo de Desarrollo (SW707 — FIIS UNI)
 - **Franz Joe Inga Champi** — *Ingeniería de Software*
 - **Yazid Elio Fernandez Dueñas** — *Ingeniería de Software*
-- **Docente:** Curso SW707 Construcción de Software II — Semestre 2026-II
+- **Docente:** — *ANIBAL JAVIER GUILLEN VASQUEZ*
+- **Curso SW707 Construcción de Software II — Semestre 2026-II**
