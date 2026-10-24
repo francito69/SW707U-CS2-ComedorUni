@@ -232,7 +232,7 @@ requiere(estudiante_id > 0, "estudiante_id debe ser positivo")
 requiere(turno_dia_id > 0, "turno_dia_id debe ser positivo")
 requiere(raciones_max > 0, "raciones_max debe ser positivo")
 ...                                  # sección crítica (sección 8.2)
-asegura(numero == ultimo_numero + 1, "el número de turno es el máximo previo + 1")
+asegura(numero == ultimo_numero + 1, "el número de turno es el máximo no cancelado + 1")
 asegura(activos + 1 <= raciones_max, "los turnos activos no superan raciones_max")
 ```
 
@@ -242,7 +242,7 @@ Si una postcondición falla, la transacción no se confirma.
 
 | Operación | Precondiciones (si fallan → respuesta) | Postcondiciones | Invariantes |
 |---|---|---|---|
-| **`POST /queue/join`** | `sid` UUID v4 y `tipo` ∈ {ALMUERZO, CENA, PRUEBA} → 422 · sesión activa → 401 `sesion_invalida` · turno de ese tipo abierto ahora → 400 `turno_no_activo` · estudiante registrado → 404 `estudiante_no_registrado` · turno del día habilitado → 409 `turno_no_habilitado` · sin turno activo → 409 `turno_duplicado` · quedan raciones → 400 `sin_raciones` | Turno `ESPERANDO` con número = máximo previo + 1; la respuesta incluye `raciones_restantes`; se publica `turno.encolado` (best-effort). | Turnos activos ≤ `raciones_max`. Un solo turno activo por estudiante y servicio. |
+| **`POST /queue/join`** | `sid` UUID v4 y `tipo` ∈ {ALMUERZO, CENA, PRUEBA} → 422 · sesión activa → 401 `sesion_invalida` · turno de ese tipo abierto ahora → 400 `turno_no_activo` · estudiante registrado → 404 `estudiante_no_registrado` · turno del día habilitado → 409 `turno_no_habilitado` · sin turno activo → 409 `turno_duplicado` · quedan raciones → 400 `sin_raciones` | Turno `ESPERANDO` con número = máximo no cancelado + 1 (salir y volver a entrar sin que nadie más haya entrado conserva el número); la respuesta incluye `raciones_restantes`; se publica `turno.encolado` (best-effort). | Turnos activos ≤ `raciones_max`. Un solo turno activo por estudiante y servicio. |
 | **`POST /queue/confirm`** | Sesión activa → 401 · tiene turno activo → 404 `sin_turno_activo` · el turno no está `ATENDIDO` ni `CANCELADO` → 400 `turno_finalizado` | Si estaba `LLAMADO`: pasa a `ATENDIDO`, se fija `confirmado_at`, se publica `turno.atendido` y su cupo pasa a la siguiente persona de la cola. Si estaba `ESPERANDO`: solo renueva `ultimo_ping` ("Sigo aquí") y responde `ESPERANDO`. | `ATENDIDO` y `CANCELADO` son estados finales. |
 | **`POST /queue/leave`** | Sesión activa → 401 | `ESPERANDO`/`LLAMADO` pasa a `CANCELADO` y libera la ración. Idempotente: sin turno o con turno terminado responde 200 sin cambios. | Un turno `ATENDIDO` nunca se cancela. |
 | **`GET /queue/status`** | `sid` UUID v4 → 422 · sesión → 401 · turno hoy → 404 | Estado, posición y turno en atención; grupo de comedor solo si está `ATENDIDO`, calculado por el orden en que confirmó (no por su número de cola). | Grupo asignado entre 1 y 10; confirmar tarde no mueve el grupo de nadie. |

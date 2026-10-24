@@ -77,8 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_turnos_dia ON turnos (turno_dia_id, estado);
 Primero creamos el índice único para que la base de datos rechace un
 duplicado, ahora toca analzar la lógica de negocio para que no se genere un duplicado
 */
+-- Parcial: un número de un turno CANCELADO puede reasignarse (ver crear_turno).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turnos_numero_turno_unico
-ON turnos (turno_dia_id, numero_turno);
+ON turnos (turno_dia_id, numero_turno)
+WHERE estado != 'CANCELADO';
 
 -- Solo un turno activo por estudiante por día, pero permite múltiples cancelaciones
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turnos_activo

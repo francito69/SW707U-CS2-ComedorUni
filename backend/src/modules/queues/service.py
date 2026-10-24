@@ -320,7 +320,9 @@ def crear_turno(estudiante_id: int, turno_dia_id: int, raciones_max: int, conn=N
     Asigna el siguiente número de turno en una sección crítica sobre turno_dia.
 
     Precondiciones: ids y raciones_max positivos; el turno_dia existe.
-    Postcondiciones: el número es exactamente el máximo previo + 1 y los turnos
+    Postcondiciones: el número es exactamente el máximo previo + 1 (sin contar los
+    CANCELADOS: quien sale y vuelve a entrar sin que nadie más haya entrado
+    recupera el mismo número, y siempre queda detrás de los activos) y los turnos
     activos del día no superan raciones_max (invariante de aforo).
     Errores de negocio: SinRaciones si ya no quedan cupos; TurnoDuplicado si el
     estudiante ya tiene un turno activo (lo garantiza idx_turnos_activo).
@@ -340,7 +342,7 @@ def crear_turno(estudiante_id: int, turno_dia_id: int, raciones_max: int, conn=N
             cur.execute(
                 """
                 SELECT COUNT(*) FILTER (WHERE estado != 'CANCELADO'),
-                       COALESCE(MAX(numero_turno), 0)
+                       COALESCE(MAX(numero_turno) FILTER (WHERE estado != 'CANCELADO'), 0)
                 FROM turnos
                 WHERE turno_dia_id = %s
                 """,
@@ -366,7 +368,7 @@ def crear_turno(estudiante_id: int, turno_dia_id: int, raciones_max: int, conn=N
                 raise
             numero = cur.fetchone()[0]
 
-        asegura(numero == ultimo_numero + 1, "el número de turno es el máximo previo + 1")
+        asegura(numero == ultimo_numero + 1, "el número de turno es el máximo no cancelado + 1")
         asegura(activos + 1 <= raciones_max, "los turnos activos no superan raciones_max")
         _conn.commit()
         return TurnoCreado(numero=numero, raciones_restantes=raciones_max - activos - 1)
