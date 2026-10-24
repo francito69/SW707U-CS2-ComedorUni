@@ -8,7 +8,7 @@ class RepositorioTurnosPostgres(RepositorioTurnos):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT COALESCE(MAX(numero_turno), 0) FROM turnos WHERE turno_dia_id = %s",
+                    "SELECT COALESCE(MAX(numero_turno), 0) FROM turnos WHERE turno_dia_id = %s AND estado != 'CANCELADO'",
                     (turno_dia_id,)
                 )
                 return cur.fetchone()[0]

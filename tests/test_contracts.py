@@ -56,14 +56,34 @@ def test_invariante_de_aforo_nunca_se_supera(pg, turno_dia_prueba, estudiantes):
         assert cur.fetchone()[0] == 2
 
 
-def test_un_turno_cancelado_libera_su_racion(pg, turno_dia_prueba, estudiantes):
+def test_un_turno_cancelado_libera_su_racion_y_su_numero(pg, turno_dia_prueba, estudiantes):
     a, b = estudiantes(2)
     primero = crear_turno(a, turno_dia_prueba, raciones_max=1)
     with pg.cursor() as cur:
         cur.execute("UPDATE turnos SET estado = 'CANCELADO' WHERE turno_dia_id = %s AND numero_turno = %s",
                     (turno_dia_prueba, primero.numero))
     segundo = crear_turno(b, turno_dia_prueba, raciones_max=1)
-    assert segundo.numero == primero.numero + 1  # los números no se reciclan
+    # El cancelado no cuenta: si nadie más entró, el número se reutiliza.
+    assert segundo.numero == primero.numero
+
+
+def test_salir_y_volver_a_entrar_sin_nadie_mas_conserva_el_numero(pg, turno_dia_prueba, estudiantes):
+    (a,) = estudiantes(1)
+    for _ in range(3):
+        assert crear_turno(a, turno_dia_prueba, raciones_max=10).numero == 1
+        with pg.cursor() as cur:
+            cur.execute("UPDATE turnos SET estado = 'CANCELADO' WHERE turno_dia_id = %s AND estudiante_id = %s",
+                        (turno_dia_prueba, a))
+
+
+def test_quien_vuelve_a_entrar_queda_detras_de_los_activos(pg, turno_dia_prueba, estudiantes):
+    a, b = estudiantes(2)
+    crear_turno(a, turno_dia_prueba, raciones_max=10)
+    crear_turno(b, turno_dia_prueba, raciones_max=10)
+    with pg.cursor() as cur:
+        cur.execute("UPDATE turnos SET estado = 'CANCELADO' WHERE turno_dia_id = %s AND estudiante_id = %s",
+                    (turno_dia_prueba, a))
+    assert crear_turno(a, turno_dia_prueba, raciones_max=10).numero == 3
 
 
 @pytest.mark.parametrize("raciones_max", [1, 7, 10, 95, 5000])
