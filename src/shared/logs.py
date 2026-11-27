@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sys
@@ -14,6 +15,21 @@ class _RequestIdFilter(logging.Filter):
         return True
 
 
+class JsonFormatter(logging.Formatter):
+    """Formateador de logs estructurados en JSON para observabilidad."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "pid": record.process,
+            "request_id": getattr(record, "request_id", "-"),
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
 def configurar_logging() -> None:
     raiz = logging.getLogger()
     if any(getattr(h, "_comedor", False) for h in raiz.handlers):
@@ -21,8 +37,11 @@ def configurar_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler._comedor = True
     handler.addFilter(_RequestIdFilter())
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)-7s [pid %(process)d] [req %(request_id)s] %(name)s: %(message)s"
-    ))
+    if os.getenv("LOG_FORMAT", "text").lower() == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s [pid %(process)d] [req %(request_id)s] %(name)s: %(message)s"
+        ))
     raiz.addHandler(handler)
     raiz.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())

@@ -131,3 +131,13 @@ def db_conn():
         yield conn
     finally:
         conn.close()
+
+
+@contextmanager
+def use_conn(conn=None):
+    """Reutiliza `conn` si se provee; si es None, abre una conexión del pool y la cierra al salir."""
+    if conn is not None:
+        yield conn
+        return
+    with db_conn() as owned_conn:
+        yield owned_conn
